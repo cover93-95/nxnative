@@ -18,6 +18,14 @@
 #ifndef DM_PLAYER_BUILD
 #define DM_PLAYER_BUILD 0
 #endif
+// Route C (docs/launcher-c-plan.md M1): DM_FRAMEWORK_BUILD is set by project-framework.yml, whose app carries the game's
+// modules in Frameworks/DmGame.framework instead of Gen/embed.S. The default project never defines it.
+#ifndef DM_FRAMEWORK_BUILD
+#define DM_FRAMEWORK_BUILD 0
+#endif
+#if DM_FRAMEWORK_BUILD
+#include "FrameworkBootstrap.h"
+#endif
 
 extern char **environ;
 
@@ -237,6 +245,14 @@ static int boot_env(void) {
     // First line of the log: the fork's patches this build carries (Info.plist DMForkPatches), so a report says whether it comes from a build beyond upstream's support
     NSString *fork_patches = [NSBundle.mainBundle objectForInfoDictionaryKey:@"DMForkPatches"];
     fprintf(stderr, "fork patches: %s\n", [fork_patches isKindOfClass:NSString.class] && fork_patches.length ? fork_patches.UTF8String : "none");
+#if DM_FRAMEWORK_BUILD
+    // Route C: the runtime profile ships inside the game framework, and dm_profile() (hle_profile.c) reads DM_PROFILE on its
+    // first call below (front_hud_env, romfs_locate, the per-game data folders). Before the env files, and forced: the game
+    // this app carries is the framework's, not whatever a diagnostic file names.
+    NSString *fwd = [NSBundle.mainBundle.privateFrameworksURL URLByAppendingPathComponent:@DM_FRAMEWORK_DIRECTORY].path;
+    setenv("DM_PROFILE", [fwd stringByAppendingPathComponent:@"profile.tsv"].fileSystemRepresentation, 1);
+    fprintf(stderr, "boot: game framework %s\n", fwd.fileSystemRepresentation);
+#endif
     // Environment switch files (for on-device diagnostics: a sideloaded app cannot be given environment variables from outside): one KEY=VALUE per line, # starts a comment; Documents/env.txt takes precedence over dm/env.txt in the bundle (put there by build_ipa.sh's DM_ENV_FILE)
     NSMutableArray<NSString *> *from_file = [NSMutableArray array], *from_launch = [NSMutableArray array];
     for (char **e = environ; *e; e++) {   // set at launch (Xcode, devicectl): before the env files, and the launcher keeps them
@@ -282,6 +298,12 @@ static int boot_env(void) {
     BOOL per_game = [romfs hasPrefix:gdir];   // messaging nil is NO here: no data means the shared layout
     if (!set_data_env(romfs, NO)) { if (!romfs) romfs_identity_report(doc);   // a slim build says why its romfs.img was not used
         fprintf(stderr, "boot: no game data yet (Documents/romfs.img, Documents/romfs or <App>/romfs); the launcher asks for it\n"); }
+#if DM_FRAMEWORK_BUILD
+    // Route C: the modules, their rewriter tables and the shader map are the framework's. dlopen + dlsym + dladdr hand its
+    // mach header to the loader here, after the data went to DM_ROMFS and before loading starts (the design's order).
+    if (!dm_open_game_framework(fwd.fileSystemRepresentation)) return 0;
+    dm = [fwd stringByAppendingPathComponent:@"dm"];
+#endif
     setenv("DM_NVN_SHMAP", [dm stringByAppendingPathComponent:@"shader_map.tsv"].fileSystemRepresentation, 0);
     // Shader libraries: a game's own <gdir>/msl first (a per-game layout may carry its own), else
     // the app's shared <App>/msl (the program's <App>/msl/p<N> in a game of several programs).
