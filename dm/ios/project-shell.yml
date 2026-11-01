@@ -48,6 +48,7 @@ targets:
       path: Gen/Info.plist
       properties:
         CFBundleDisplayName: ${DM_SHELL_NAME}
+        CFBundleLocalizations: [en, zh-Hans]   # ShellUI and ShellHost carry en and zh-Hans catalogs, iOS offers only the declared ones to the package bundles
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         UILaunchScreen: {}
