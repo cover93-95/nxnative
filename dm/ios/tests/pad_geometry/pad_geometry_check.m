@@ -118,6 +118,24 @@ int main(void) {
             if (i <= 4 && !(ul > um * 1.15)) FAIL("%s %s: large is not larger (%.3f vs %.3f)", screens[i].name, full ? "3D" : "2D", ul, um);
         }
 
+    // The 3D layout's right-stick hint: in the right third, inside the safe area, clear of every control; on every phone in landscape
+    // and every size it has room for a short and a long wording.
+    for (int i = 0; i < nscreens; i++)
+        for (int z = 0; z < 3; z++)
+            for (int w = 0; w < 2; w++) {
+                DmLayout l = dm_layout(screens[i].bounds, screens[i].insets, screens[i].partiallyOpen, screens[i].division, DM_PICTURE_16_9);
+                DmPadGeo g = dm_pad_geo(screens[i].bounds, screens[i].insets, l, YES, (DmPadOptions){dm_pad_size_scale(k_sizes[z]), 0});
+                CGFloat areaMinX = CGRectGetMaxX(l.controls) - l.controls.size.width / 3;
+                CGSize text = CGSizeMake(w ? fmax(300 * g.u, 280) : 150 * g.u, fmax(30 * g.u, 28));   // the long one: about 30 characters at the label's 13 to 20 points
+                CGRect r = dm_pad_hint_rect(&g, areaMinX, text);
+                if (CGRectIsNull(r)) { if (i <= 6 || i == 12) FAIL("%s %s: no room for the hint (%s)", screens[i].name, k_sizes[z], w ? "long" : "short"); continue; }
+                if (CGRectGetMinX(r) < areaMinX - 0.5 && CGRectGetMaxX(r) < CGRectGetMaxX(g.safe) - 0.5) FAIL("%s %s: the hint is not at the right edge's area", screens[i].name, k_sizes[z]);
+                if (!CGRectContainsRect(g.safe, r)) FAIL("%s %s: the hint leaves the safe area", screens[i].name, k_sizes[z]);
+                DmPadShape sh[20]; int n = dm_pad_shapes(&g, YES, sh);
+                DmPadShape me = {CGPointZero, 0, r, YES, g.safe, -1};
+                for (int k = 0; k < n; k++) if (dm_pad_shapes_overlap(&me, &sh[k])) FAIL("%s %s: the hint covers shape %d", screens[i].name, k_sizes[z], sh[k].id);
+            }
+
     if (!g_fail) printf("ok: %d screens\n", nscreens);
     return g_fail > 100 ? 100 : g_fail;
 }

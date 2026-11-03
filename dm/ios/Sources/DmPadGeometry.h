@@ -196,4 +196,26 @@ static inline DmPadGeo dm_pad_geo(CGRect bounds, UIEdgeInsets insets, DmLayout l
     return g;
 }
 
+// Where the 3D layout's right-stick hint goes: a few words, no shape, in the area the undrawn right stick answers in (x from areaMinX to
+// the right edge), between the top row and the diamond, inside the safe area and clear of every drawn control (a gap of 6 u around it).
+// text is the label's size including its padding. CGRectNull when there is no room: the hint is then not shown.
+static inline CGRect dm_pad_hint_rect(const DmPadGeo *g, CGFloat areaMinX, CGSize text) {
+    CGRect s = g->safe; CGFloat gap = 6 * g->u;
+    CGFloat left = MAX(areaMinX, CGRectGetMinX(s)), right = CGRectGetMaxX(s);
+    if (right - left < text.width) { left = right - text.width; if (left < CGRectGetMinX(s)) return CGRectNull; }
+    CGFloat top = CGRectGetMinY(s);   // below the right half of the top row
+    for (int i = DM_PAD_ZR; i <= DM_PAD_R; i++) top = MAX(top, g->drop[i].y + g->dropR[i]);
+    top = MAX(top, g->click[1].y + g->clickR);
+    top = MAX(top, CGRectGetMaxY(g->pill[DM_PAD_PLUS]));
+    CGFloat bottom = g->face.y - g->faceGap - g->faceR;   // above the diamond's X
+    CGFloat x = (left + right) / 2 - text.width / 2, y = (top + bottom) / 2 - text.height / 2;
+    x = fmax(left, fmin(x, right - text.width));
+    CGRect r = CGRectMake(x, y, text.width, text.height);
+    DmPadShape sh[20]; int n = dm_pad_shapes(g, YES, sh);
+    DmPadShape me = {CGPointZero, 0, CGRectInset(r, -gap, -gap), YES, s, -1};
+    if (!CGRectContainsRect(s, r)) return CGRectNull;
+    for (int i = 0; i < n; i++) if (dm_pad_shapes_overlap(&me, &sh[i])) return CGRectNull;
+    return r;
+}
+
 NS_ASSUME_NONNULL_END
