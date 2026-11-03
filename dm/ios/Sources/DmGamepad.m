@@ -9,8 +9,9 @@
 //     (a touch landing in the right third of the screen on no control holds it: centred where it lands, the centre dragged along once the finger passes the stick radius) and L3 / R3 (small round keys in the top row, inward of ZL / ZR).
 //     Breath of the Wild crouches with L3 and uses the scope with R3; 3D World and Breath of the Wild turn the camera with the right stick.
 //     The first time the 3D layout shows in a launch, a few words (DM_TOUCH_HINT) say where the undrawn right stick is, for two seconds; see "The right-stick hint".
-//   Touch-down ownership: the menu button where it is nearer than a locked key (a view of its own, DmMenuButton), locked keys next (shoulders, − / +, L3 / R3), then whichever of the diamond, the D-pad and the left stick has the smallest distance / grab radius (the left stick's grab circle borders the D-pad),
+//   Touch-down ownership (dm_pad_menu_takes and dm_pad_hit in DmPadGeometry.h): the menu button where it is nearer than a locked key (a view of its own, DmMenuButton), locked keys next (shoulders, − / +, L3 / R3), then whichever of the diamond, the D-pad and the left stick has the smallest distance / grab radius (the left stick's grab circle borders the D-pad),
 //     then in 3D the right stick for a touch in the right third.
+//   The player can move single controls in the shell's settings (DM_TOUCH_LAYOUT, one arrangement per layout): the geometry places each only where it fits and keeps the rest where they were.
 //   Everything hugs the edges and corners to leave the picture room; controls sit over the picture, one CAShapeLayer each: a press only swaps the fill, a stick only moves its knob, nothing redraws the whole screen.
 //   Where each control sits is DmPadGeometry.h (pure, tested on the Mac); the player picks the size there through DM_TOUCH_SIZE (small, medium, large; a size that does not fit the screen moves toward medium) and the left stick's place through DM_TOUCH_STICK (corner, higher, inward).
 //   Touches no control takes (in 3D, those outside the right third) go to the game's touch screen when DmLayout assigns a local game viewport (pushGame; Super Mario Galaxy's pointer in handheld mode).
@@ -119,11 +120,9 @@ static void phone_motion_start(UIView *body) {
 // The bottom-corner controls reach halfway into the side safe-area inset (in landscape there is only the rounded screen corner there; the Dynamic Island is mid-edge);
 // the stick's ring is as large as the whole diamond (key distance + key radius), the knob a little larger than a diamond key; the D-pad sits inward of and below the
 // left stick, as on a Pro Controller. The menu button is at the top centre, level with - / +, and takes a touch within 1.6 times its radius (at least 22 points, half of a 44-point target). What stays here is how touches are taken:
-static const CGFloat
-    K_STICK_GRAB = 1.4,                             // how near the ring centre a touch-down grabs a stick (times the ring radius)
+static const CGFloat                               // (the grab radii of the stick and the D-pad are DmPadGeometry.h's DM_PAD_STICK_GRAB and DM_PAD_DPAD_GRAB)
     K_FULL = 0.8,                                   // full tilt at this fraction of the ring radius (the knob still travels to the ring edge)
     K_DEAD = 0.1,                                   // stick dead zone (times the ring radius)
-    K_DPAD_GRAB = 1.3,                              // D-pad grab radius (times the outer edge)
     K_RSTICK_R = 60,                                // right stick (not drawn): radius around its centre, the touch-down point
     K_RSWIPE = 1.0 / 3;                             // right stick area: this fraction of the screen width from the right edge (not in u)
 static const int k_btns[] = {B_ZL, B_L, B_ZR, B_R, B_MINUS, B_PLUS, B_LS, B_RS};   // keys locked at touch-down (L3 / R3 only in the 3D layout)
@@ -164,8 +163,10 @@ static void pads_start(void);   // Physical controllers, below
     CALayer *_controls;                            // holds every control layer: hidden while a physical controller is connected (the view itself stays, for game touches)
     BOOL _padOff;                                  // a physical controller is connected: every touch goes to the game
     DmLayout _layout;
-    DmPadOptions _opts;                            // the player's options from the environment (DM_TOUCH_SIZE, DM_TOUCH_STICK)
+    DmPadOptions _opts;                            // the player's options from the environment (DM_TOUCH_SIZE, DM_TOUCH_STICK, DM_TOUCH_LAYOUT)
+    DmPadLayout _arrangement;                      // DM_TOUCH_LAYOUT, which _opts.layout points to
     DmPadGeo _geo; CGRect _geoBounds; UIEdgeInsets _geoInsets; BOOL _geoFull, _geoValid;   // where the controls are, and what it was computed for
+    unsigned _loggedDropped;                       // the moved controls that kept their place, as last logged
     UITouch *_game[16];                           // touches on the game's touch screen by finger slot
 }
 
@@ -192,6 +193,10 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
         const char *stick = getenv("DM_TOUCH_STICK");
         _opts.stick = dm_pad_stick_place(stick);
         if (stick && *stick) LOG("front end: left stick %s (DM_TOUCH_STICK)", _opts.stick == DM_PAD_STICK_HIGHER ? "higher" : _opts.stick == DM_PAD_STICK_INWARD ? "inward" : "in the corner");
+        const char *arrangement = getenv("DM_TOUCH_LAYOUT");
+        if (!dm_pad_layout_parse(arrangement, &_arrangement)) LOG("front end: DM_TOUCH_LAYOUT ignored (not a layout the engine reads, %zu characters): every control keeps its place", strlen(arrangement));
+        else if (dm_pad_layout_count(&_arrangement)) LOG("front end: touch controls arranged by the player (DM_TOUCH_LAYOUT, %d moved over every layout)", dm_pad_layout_count(&_arrangement));
+        _opts.layout = &_arrangement;
         [self registerForTraitChanges:@[UITraitDisplayScale.class] withHandler:^(id<UITraitEnvironment> environment, UITraitCollection *previous) {
             [(UIView *)environment setNeedsLayout];
         }];
@@ -281,6 +286,12 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
     if (!_geoValid || !CGRectEqualToRect(b, _geoBounds) || !UIEdgeInsetsEqualToEdgeInsets(i, _geoInsets) || _geoFull != _full) {
         _geo = dm_pad_geo(b, i, _layout, _full, _opts);
         _geoBounds = b; _geoInsets = i; _geoFull = _full; _geoValid = YES;
+        if (_geo.dropped != _loggedDropped) {   // a moved control with no room on this screen: said once per change, for the log a player sends
+            _loggedDropped = _geo.dropped;
+            NSMutableArray<NSString *> *names = [NSMutableArray array];
+            for (int c = 0; c < DM_PAD_C_N; c++) if (_geo.dropped & (1u << c)) [names addObject:@(dm_pad_control_names[c])];
+            if (names.count) LOG("front end: touch layout: %s kept at the built-in place (no room there on this screen, or on another control)", [names componentsJoinedByString:@" "].UTF8String);
+        }
     }
     return &_geo;
 }
@@ -306,33 +317,14 @@ static int dropIndex(int b) { return b == B_ZL ? DM_PAD_ZL : b == B_L ? DM_PAD_L
 - (CGPoint)menuCenter { return self.geo->swap; }
 
 static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); }
-- (CGFloat)buttonDistance:(int)b point:(CGPoint)p {
-    CGFloat u = self.u;
-    if (isDrop(b)) return dist(p, [self dropCenter:b]) / MAX([self dropR:b] * 1.35, _layout.separated ? 22 : 0);
-    if (isClick(b)) return dist(p, [self clickCenter:b]) / MAX(self.geo->clickR * 1.35, _layout.separated ? 22 : 0);
-    CGRect r = CGRectInset([self pillRect:b], -8 * u, -8 * u);
-    if (!_layout.separated && !CGRectContainsPoint(r, p)) return CGFLOAT_MAX;
-    CGFloat w = MAX(r.size.width, _layout.separated ? 28 : 0), h = MAX(r.size.height, _layout.separated ? 28 : 0);
-    return MAX(fabs(p.x - CGRectGetMidX(r)) / (w / 2), fabs(p.y - CGRectGetMidY(r)) / (h / 2));
+static int lockedKey(int c) {   // DmPadGeometry.h's control → the key it presses
+    switch (c) { case DM_PAD_C_ZL: return B_ZL; case DM_PAD_C_L: return B_L; case DM_PAD_C_ZR: return B_ZR; case DM_PAD_C_R: return B_R;
+                 case DM_PAD_C_MINUS: return B_MINUS; case DM_PAD_C_PLUS: return B_PLUS; case DM_PAD_C_L3: return B_LS; default: return B_RS; }
 }
-- (int)btnAt:(CGPoint)p {   // Locked at touch-down; nearest normalized target wins overlapping separated-layout hits.
-    int best = -1; CGFloat distance = 1;
-    for (int i = 0; i < (int)(sizeof k_btns / sizeof *k_btns); i++) { int b = k_btns[i];
-        if (fullOnly(b) && !_full) continue;
-        CGFloat d = [self buttonDistance:b point:p];
-        if (d <= 1 && (best < 0 || d < distance)) {
-            best = b; distance = d;
-            if (!_layout.separated) return b;
-        }
-    }
-    return best;
-}
-- (CGFloat)menuDistance:(CGPoint)p { return dist(p, self.menuCenter) / MAX(self.geo->swapR * 1.6, 22); }
 - (BOOL)menuTakes:(CGPoint)p {   // the menu button takes a touch in its hit circle unless a locked key's target is nearer (the drawn keys are hidden in Tap and with a controller)
-    CGFloat d = [self menuDistance:p]; if (d > 1) return NO;
+    if (dm_pad_menu_distance(self.geo, p) > 1) return NO;
     if (_tap || _padOff || (_layout.separated && !CGRectContainsPoint(_layout.controls, p))) return YES;
-    int hit = [self btnAt:p];
-    return hit < 0 || d < [self buttonDistance:hit point:p];
+    return dm_pad_menu_takes(self.geo, _full, _layout.separated, p);
 }
 - (uint64_t)faceAt:(CGPoint)p {   // keys under the finger in the diamond (between two keys both count)
     uint64_t m = 0; CGFloat r = self.faceHitR;
@@ -408,10 +400,7 @@ int front_web_touch(void);
 - (BOOL)controlAt:(CGPoint)p {
     if (_padOff || (_layout.separated && !CGRectContainsPoint(_layout.controls, p))) return NO;
     if (_tap) return NO;
-    if ([self btnAt:p] >= 0) return YES;
-    if (dist(p, self.faceCenter) / (self.faceGap + MAX(self.faceR * 1.6, self.faceHitR)) <= 1) return YES;
-    if (_full && dist(p, self.dpadCenter) / MAX(self.dpadR * K_DPAD_GRAB, _layout.separated ? 22 : 0) < 1) return YES;
-    if (!_stick[0] && dist(p, self.stickHome) / MAX([self stickR:0] * K_STICK_GRAB, _layout.separated ? 22 : 0) < 1) return YES;
+    if (dm_pad_hit(self.geo, _full, _layout.separated, _tap, !_stick[0], p).kind != DM_PAD_HIT_NONE) return YES;   // the geometry touchesBegan hits with (DmPadGeometry.h)
     return _full && !_stick[1] && [self inRightArea:p];
 }
 - (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e {
@@ -424,14 +413,10 @@ int front_web_touch(void);
         if (_padOff) { game |= [self gameBegin:t]; continue; }
         CGPoint p = [t locationInView:self];
         if (_layout.separated && !CGRectContainsPoint(_layout.controls, p)) { game |= [self gameBegin:t]; continue; }
-        int hit = _tap ? -1 : [self btnAt:p];   // the menu button took its own touches (menuTakes)
-        if (hit >= 0) { [_owner setObject:@(C_BTN | (uint64_t)hit << 8) forKey:t]; continue; }
+        DmPadHit hit = dm_pad_hit(self.geo, _full, _layout.separated, _tap, !_stick[0], p);   // the same geometry the controls are drawn with (the menu button took its own touches, menuTakes)
+        if (hit.kind == DM_PAD_HIT_KEY) { [_owner setObject:@(C_BTN | (uint64_t)lockedKey(hit.key) << 8) forKey:t]; continue; }
         if (_tap) { game |= [self gameBegin:t]; continue; }
-        // diamond, D-pad, left stick: take the one with the smallest distance / grab radius, if it is <= 1
-        CGFloat best = 1; int kind = C_NONE, idx = 0;
-        CGFloat f = dist(p, self.faceCenter) / (self.faceGap + MAX(self.faceR * 1.6, self.faceHitR)); if (f <= best) { best = f; kind = C_FACE; }
-        if (_full) { CGFloat d = dist(p, self.dpadCenter) / MAX(self.dpadR * K_DPAD_GRAB, _layout.separated ? 22 : 0); if (d < best) { best = d; kind = C_DPAD; } }
-        if (!_stick[0]) { CGFloat s = dist(p, self.stickHome) / MAX([self stickR:0] * K_STICK_GRAB, _layout.separated ? 22 : 0); if (s < best) { best = s; kind = C_STICK; } }
+        int kind = hit.kind == DM_PAD_HIT_FACE ? C_FACE : hit.kind == DM_PAD_HIT_DPAD ? C_DPAD : hit.kind == DM_PAD_HIT_STICK ? C_STICK : C_NONE, idx = 0;
         if (kind == C_NONE && _full && !_stick[1] && [self inRightArea:p]) { kind = C_STICK; idx = 1; _rCentre = p; [self hideHint]; }   // the right stick: centred where the touch lands (the hint's job is done)
         if (kind == C_FACE) { [_owner setObject:@(C_FACE) forKey:t]; [_faceOf setObject:@([self faceAt:p]) forKey:t]; }
         else if (kind == C_DPAD) [_owner setObject:@(C_DPAD) forKey:t];
