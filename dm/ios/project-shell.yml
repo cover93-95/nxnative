@@ -25,6 +25,8 @@ targets:
       - path: Shell           # the shell's main, its scene, the library and the real GameLauncher (dm/ios/Shell)
       - path: Sources/front_ios.m   # the game view, unchanged from the one-game app; ShellMain.m provides what it takes from main.m
       - path: Sources/DmGamepad.m
+      - path: Sources/GameMenu.swift   # the in-game menu the gamepad's gear opens: in the shell the layouts and Quit (no settings screen model)
+      - path: Sources/LauncherSettings.swift   # GameMenu.swift's model type
       - path: Sources/CloudSaves.m
       - path: Sources/SaveSync.m
       - path: Sources/DataBookmark.m
