@@ -76,10 +76,31 @@ int main(void) {
         if (!p.portrait || !NEAR(p.face.x, CGRectGetMinX(s) + 0.72 * s.size.width) || !NEAR(p.stick.x, CGRectGetMinX(s) + 0.28 * s.size.width)) FAIL("portrait: thumbs moved");
     }
 
-    // Every size on every screen, 2D and 3D: inside, and no overlap.
+    // Every size and stick place on every screen, 2D and 3D: inside, and no overlap.
+    static const char *places[] = {"corner", "higher", "inward"};
+    if (dm_pad_stick_place(NULL) != DM_PAD_STICK_CORNER || dm_pad_stick_place("left") != DM_PAD_STICK_CORNER || dm_pad_stick_place("higher") != DM_PAD_STICK_HIGHER
+        || dm_pad_stick_place("inward") != DM_PAD_STICK_INWARD) FAIL("DM_TOUCH_STICK: corner is the default");
     for (int i = 0; i < nscreens; i++)
         for (int full = 0; full < 2; full++)
-            for (int z = 0; z < 3; z++) check_fits(&screens[i], full, k_sizes[z], (DmPadOptions){dm_pad_size_scale(k_sizes[z])});
+            for (int z = 0; z < 3; z++)
+                for (int p = 0; p < 3; p++) {
+                    char what[64]; snprintf(what, sizeof what, "%s %s", k_sizes[z], places[p]);
+                    check_fits(&screens[i], full, what, (DmPadOptions){dm_pad_size_scale(k_sizes[z]), dm_pad_stick_place(places[p])});
+                }
+
+    // The stick moves where asked on the phones, and nothing on the right moves with it.
+    for (int i = 0; i <= 4; i++)
+        for (int full = 0; full < 2; full++)
+            for (int z = 0; z < 3; z++) {
+                DmPadOptions o = {dm_pad_size_scale(k_sizes[z]), DM_PAD_STICK_CORNER};
+                DmPadGeo c = geo(&screens[i], full, o);
+                o.stick = DM_PAD_STICK_HIGHER; DmPadGeo h = geo(&screens[i], full, o);
+                o.stick = DM_PAD_STICK_INWARD; DmPadGeo n = geo(&screens[i], full, o);
+                if (!(c.stick.y - h.stick.y >= 30 * c.u) || h.stick.x != c.stick.x) FAIL("%s %s %s: higher lifts the stick only %.1f", screens[i].name, full ? "3D" : "2D", k_sizes[z], c.stick.y - h.stick.y);
+                if (!(n.stick.x - c.stick.x >= 30 * c.u) || n.stick.y != c.stick.y) FAIL("%s %s %s: inward moves the stick only %.1f", screens[i].name, full ? "3D" : "2D", k_sizes[z], n.stick.x - c.stick.x);
+                if (full && !NEAR(n.dpad.x - c.dpad.x, n.stick.x - c.stick.x)) FAIL("%s 3D %s: the D-pad does not move with the stick", screens[i].name, k_sizes[z]);
+                if (!CGPointEqualToPoint(h.face, c.face) || !CGPointEqualToPoint(n.face, c.face) || !CGPointEqualToPoint(n.drop[DM_PAD_R], c.drop[DM_PAD_R])) FAIL("%s: the right side moved", screens[i].name);
+            }
 
     // Picture Fill (DM_PICTURE_FIT) only makes the game rectangle larger: the controls keep the full view and their places.
     for (int i = 0; i < nscreens; i++) {

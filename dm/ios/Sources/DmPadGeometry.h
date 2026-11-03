@@ -2,6 +2,7 @@
 // and the player's options, so the placement is tested without a device (dm/ios/tests/test_pad_geometry.py).
 //   Every length is in u (1 = 430 points tall, iPhone Pro Max landscape), x measured from the outer edge, the right half mirrors.
 //   The options come from the environment (the shell's settings, Documents/env.txt): DM_TOUCH_SIZE = small | medium | large scales u.
+//   DM_TOUCH_STICK = corner | higher | inward places the left stick (inward takes the D-pad along); the right-hand controls never move.
 //   An option never moves a control off the screen or onto another one: a size that does not fit falls back step by step to the size that does
 //   (dm_pad_geo_fits: every drawn shape inside its rectangle, no two drawn shapes overlap).
 #pragma once
@@ -14,8 +15,10 @@ NS_ASSUME_NONNULL_BEGIN
 enum { DM_PAD_ZL = 0, DM_PAD_L, DM_PAD_ZR, DM_PAD_R };   // the order of DmPadGeo.drop
 enum { DM_PAD_MINUS = 0, DM_PAD_PLUS };                  // the order of DmPadGeo.pill
 
+enum { DM_PAD_STICK_CORNER = 0, DM_PAD_STICK_HIGHER, DM_PAD_STICK_INWARD };   // DM_TOUCH_STICK
 typedef struct {
     CGFloat scale;   // DM_TOUCH_SIZE: 0.8 small, 1 medium (the built-in size), 1.2 large
+    int stick;       // DM_TOUCH_STICK: where the left stick sits (the D-pad moves with it when it moves inward); the right-hand controls keep their place
 } DmPadOptions;
 
 typedef struct {
@@ -52,6 +55,14 @@ static inline CGFloat dm_pad_size_scale(const char *_Nullable v) {
     if (v && !strcmp(v, "large")) return 1.2;
     return 1;
 }
+
+// DM_TOUCH_STICK: corner (also unset, empty or unknown), higher or inward.
+static inline int dm_pad_stick_place(const char *_Nullable v) {
+    if (v && !strcmp(v, "higher")) return DM_PAD_STICK_HIGHER;
+    if (v && !strcmp(v, "inward")) return DM_PAD_STICK_INWARD;
+    return DM_PAD_STICK_CORNER;
+}
+static const CGFloat DM_PAD_STICK_UP = 70, DM_PAD_STICK_IN = 60;   // how far higher / inward moves the left stick (in u), at most
 
 static inline CGPoint dm_pad_side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPointMake(right ? CGRectGetMaxX(s) - dx : CGRectGetMinX(s) + dx, y); }
 
@@ -169,6 +180,18 @@ static inline DmPadGeo dm_pad_geo(CGRect bounds, UIEdgeInsets insets, DmLayout l
     while (scale != 1 && !dm_pad_geo_fits(&g, full)) {
         scale = scale > 1 ? fmax(1, scale - 0.05) : fmin(1, scale + 0.05);
         g = dm_pad_geo_at(bounds, insets, layout, full, u0 * scale);
+    }
+    // The left stick's place: higher lifts it toward the shoulders, inward moves it (and the D-pad, which sits inward of it) toward the
+    // middle. The move shrinks in steps until nothing overlaps; on a screen with no room the stick stays in the corner.
+    if (o.stick != DM_PAD_STICK_CORNER) {
+        BOOL up = o.stick == DM_PAD_STICK_HIGHER;
+        CGPoint stick = g.stick, dpad = g.dpad;
+        for (CGFloat d = (up ? DM_PAD_STICK_UP : DM_PAD_STICK_IN) * g.u; d > 0; d -= 2 * g.u) {
+            if (up) g.stick = CGPointMake(stick.x, stick.y - d);
+            else { g.stick = CGPointMake(stick.x + d, stick.y); g.dpad = CGPointMake(dpad.x + d, dpad.y); }
+            if (dm_pad_geo_fits(&g, full)) return g;
+        }
+        g.stick = stick; g.dpad = dpad;
     }
     return g;
 }
