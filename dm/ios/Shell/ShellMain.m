@@ -119,7 +119,15 @@ bool dm_show_launcher(void *view_controller, void (*done)(void)) { (void)view_co
 
 @interface App : UIResponder <UIApplicationDelegate>
 @end
+// Browsing may be portrait; phone gameplay stays landscape. UIKit manages unrestricted rotation on the Duo inner display.
+static UIInterfaceOrientationMask shell_orientations(UITraitCollection *traits) {
+    if (traits.userInterfaceIdiom != UIUserInterfaceIdiomPhone) return UIInterfaceOrientationMaskAll;
+    return g_boot_ok ? UIInterfaceOrientationMaskLandscape : UIInterfaceOrientationMaskAllButUpsideDown;
+}
 @implementation App
+- (UIInterfaceOrientationMask)application:(UIApplication *)application supportedInterfaceOrientationsForWindow:(UIWindow *)window {
+    return shell_orientations(window.traitCollection);   // iOS 26
+}
 - (UISceneConfiguration *)application:(UIApplication *)a configurationForConnectingSceneSession:(UISceneSession *)s options:(UISceneConnectionOptions *)o {
     return [[UISceneConfiguration alloc] initWithName:@"Default" sessionRole:s.role];
 }
@@ -129,6 +137,9 @@ bool dm_show_launcher(void *view_controller, void (*done)(void)) { (void)view_co
 @property (strong, nonatomic) UIWindow *window;
 @end
 @implementation SceneDelegate
+- (UIInterfaceOrientationMask)supportedInterfaceOrientationsForWindowScene:(UIWindowScene *)windowScene {
+    return shell_orientations(windowScene.traitCollection);   // iOS 27 and later
+}
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)o {
     self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     self.window.rootViewController = [ShellLibrary makeController];

@@ -154,6 +154,11 @@ class ShellBuild(unittest.TestCase):
         info = plistlib.loads((app / 'Info.plist').read_bytes())
         self.assertEqual(info['CFBundleDisplayName'], 'Shell Fixture')
         self.assertEqual(info['CFBundleIdentifier'], 'org.nxnative.ci.shell')
+        self.assertNotIn('UIRequiresFullScreen', info)
+        landscape = {'UIInterfaceOrientationLandscapeLeft', 'UIInterfaceOrientationLandscapeRight'}
+        self.assertEqual(set(info['UISupportedInterfaceOrientations']), landscape | {'UIInterfaceOrientationPortrait'})
+        self.assertEqual(set(info['UISupportedInterfaceOrientations~ipad']),
+                         landscape | {'UIInterfaceOrientationPortrait', 'UIInterfaceOrientationPortraitUpsideDown'})
         self.assertEqual('b-' + info['DMChain'], CHAIN)
         self.assertEqual(info['CFBundleIcons']['CFBundlePrimaryIcon']['CFBundleIconName'], 'AppIcon')   # frontend-ios/AppIcon.icon
         self.assertTrue((app / 'Assets.car').is_file())
