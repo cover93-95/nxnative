@@ -449,6 +449,23 @@ def configure_dotnet(env):
             return
 
 
+def dotnet_sdk10_first(env):
+    """Put the first dotnet on PATH that lists an SDK 10 or newer in front. TOOL_PATHS looks in /usr/local/share/dotnet before ~/.dotnet, so an
+    older .NET left there by an installer would build nx_extract and stop with NETSDK1045 while the .NET 10 of dotnet-install.sh sits in ~/.dotnet.
+    PATH stays as it is when the first dotnet has an SDK 10 or none has one."""
+    dirs = env['PATH'].split(os.pathsep)
+    found = [(d, dn) for d in dict.fromkeys(dirs) if d and (dn := shutil.which('dotnet', path=d))]
+    for i, (d, dn) in enumerate(found):
+        try:
+            out = subprocess.run([dn, '--list-sdks'], env=env, capture_output=True, text=True, timeout=30).stdout
+        except (OSError, subprocess.SubprocessError): continue
+        if any(int(v) >= 10 for v in re.findall(r'^(\d+)\.', out, re.M)):
+            if i:
+                env['PATH'] = os.pathsep.join([d] + [x for x in dirs if x != d])
+                say(f'dotnet: {d}, the first with an SDK 10 ({found[0][0]} comes before it and has none)')
+            return
+
+
 # ---- NSP identification ----
 def is_package(path):   # what nx_extract's OpenNsp opens: an XCI / XCZ by the card header's magic at 0x100, else a PFS0 (NSP, NSZ)
     with open(path, 'rb') as f: h = f.read(0x104)
@@ -2975,6 +2992,7 @@ def main(args=None):
     # who wants telemetry on keeps it.
     env.setdefault('DOTNET_CLI_TELEMETRY_OPTOUT', '1')
     env.setdefault('DOTNET_NOLOGO', '1')
+    dotnet_sdk10_first(env)   # before configure_dotnet, which takes the runtime root from the dotnet PATH finds first
     configure_dotnet(env)
     xlate_bin = repo / 'dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate'   # the fork's check of the root configure_dotnet chose (fork commit d0ed53df; the fork patch nsp-dotnet-root-verify)
     def xlate_answers(root):
