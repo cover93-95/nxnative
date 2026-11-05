@@ -1435,6 +1435,12 @@ void front_run(void (*guest)(void)) {
     if (!getenv("DM_WINDOW")) { guest(); return; }
     @autoreleasepool {
         [NSApplication sharedApplication];
+        // DM_CURSOR_HIDDEN=1 (see the pointer below) hides it here, before the app takes the front: a hide after the window left the pointer up until it ran. The
+        // launcher's console also yields the front to the game rather than let LaunchServices activate it when it registers, which shows the pointer whatever the app
+        // hid (issue #380)
+        const char *ch = getenv("DM_CURSOR_HIDE"), *hs = getenv("DM_CURSOR_HIDDEN"); double idle = ch && *ch ? atof(ch) : 3.0;
+        int start_hidden = idle > 0 && hs && !strcmp(hs, "1");
+        if (start_hidden) [NSCursor hide];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
         NSRect r = NSMakeRect(0, 0, 1280, 720);
         NSWindow *win = [[NSWindow alloc] initWithContentRect:r
@@ -1469,7 +1475,9 @@ void front_run(void (*guest)(void)) {
         [win makeKeyAndOrderFront:nil];
         screen_refresh(win.screen ?: NSScreen.mainScreen);
         g_win = win;
-        [NSApp activateIgnoringOtherApps:YES];
+        // Activated once the run loop below runs, not here: an app that takes the front while its main thread is still busy with the setup below can show
+        // the pointer for a frame although it hid it (DM_CURSOR_HIDDEN, issue #380)
+        dispatch_async(dispatch_get_main_queue(), ^{ [NSApp activateIgnoringOtherApps:YES]; });
         // A host another process starts (scripts/regress.py) is not activated (its focus state stays 2), so its window opened wherever it landed in the window order, and behind
         // another app's window macOS fires its display link about once a second: Breath of the Wild stepped up to 3 vsyncs at boot and never came back (20 fps runs).
         // DM_WINDOW_TOP=1 orders it in front without activation and keeps it above other apps' windows; the log names every change of the window's visibility either way
@@ -1524,15 +1532,13 @@ void front_run(void (*guest)(void)) {
         // The pointer hides after DM_CURSOR_HIDE seconds (3 by default, 0 keeps it) without movement over the game, and comes back with the next movement, click or scroll. macOS
         // hides it only for a game that asks (a game window does not, and a pointer left over a fullscreen game stays on the picture); it is also shown whenever the window is
         // not key or the pointer is outside the game view, so the title bar and other windows keep theirs
-        const char *ch = getenv("DM_CURSOR_HIDE"); double idle = ch && *ch ? atof(ch) : 3.0;
         if (idle > 0) {
             win.acceptsMouseMovedEvents = YES;
-            __block double last = CACurrentMediaTime(); __block int hidden = 0, armed = 0;
+            // DM_CURSOR_HIDDEN=1: the launcher's console had the pointer hidden when it started this game, so it starts hidden too (start_hidden, hidden at the top) and does
+            // not flash up until the first idle poll. The not-over rule below waits (armed) until the game window has been under the pointer once, as a new window is not key
+            // yet when the timer first runs
+            __block double last = CACurrentMediaTime(); __block int hidden = start_hidden, armed = start_hidden;
             void (^show)(void) = ^{ if (hidden) { hidden = 0; [NSCursor unhide]; } };
-            // DM_CURSOR_HIDDEN=1: the launcher's console had the pointer hidden when it started this game, so it starts hidden here too and does not flash up until the first idle poll.
-            // The not-over rule below waits (armed) until the game window has been under the pointer once, as a new window is not key yet when the timer first runs
-            const char *hs = getenv("DM_CURSOR_HIDDEN");
-            if (hs && !strcmp(hs, "1")) { hidden = 1; armed = 1; [NSCursor hide]; }
             [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMouseMoved | NSEventMaskLeftMouseDragged | NSEventMaskRightMouseDragged | NSEventMaskOtherMouseDragged |
                 NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown | NSEventMaskScrollWheel handler:^NSEvent *(NSEvent *e) { last = CACurrentMediaTime(); show(); return e; }];
             [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *t) {
