@@ -256,7 +256,7 @@ if [ "$PREPARE_XCODE" = YES ]; then
 fi
 
 # DM_FRAMEWORK_ONLY: the framework target alone, unsigned (build_shell.sh's project embeds it and Xcode signs it with the shell), then the
-# game's per-game resources into it, so one folder is one game: the shader libraries (msl/<MSLDIR>, the shell's DM_MSL_DIR), the pipeline
+# game's per-game resources into it, so one folder is one game: the shader libraries (msl/<MSLDIR> or msl/<MSLDIR>.img, msl/ the shell's DM_MSL_DIR), the pipeline
 # archive (pso/, DM_PSO_BUNDLE) and the icon the shell's library shows. The game files and add-on content stay out (data, Documents/games/<id>/)
 if [ -n "$FRAMEWORK_ONLY" ]; then
   t "xcodebuild (Release, unsigned, the game framework $FW_NAME with its own host)"
@@ -269,8 +269,17 @@ if [ -n "$FRAMEWORK_ONLY" ]; then
   [ -f "$BUILT/$FW_NAME" ] || die "no built framework $BUILT"
   OUTFW=$FRAMEWORK_ONLY/$FW_NAME.framework; mkdir -p "$OUTFW"
   rsync -a --delete --exclude /msl --exclude /pso --exclude /icon.png -- "$BUILT/" "$OUTFW/" || die "copy the framework to $OUTFW"
-  mkdir -p "$OUTFW/msl/$MSLDIR" && rsync -a --delete -- "$MSL_IOS/$MSLDIR/" "$OUTFW/msl/$MSLDIR/" || die "copy the shader libraries"
-  for old in "$OUTFW/msl/"*; do [ "$old" = "$OUTFW/msl/$MSLDIR" ] || rm -rf "$old"; done
+  # An NVN game's libraries may be the one file b-<chain>.img (dm/tools/shader_lib.py): it goes in as msl/<MSLDIR>.img, where the host reads it (nvn_mtl.m), as stage_resources.sh copies it into an app
+  LIB=$(lib_path "$MSL_IOS/$MSLDIR") || die "shader libraries $MSL_IOS/$MSLDIR"
+  mkdir -p "$OUTFW/msl" || die "mkdir $OUTFW/msl"
+  if [ -f "$LIB" ]; then
+    rm -rf "$OUTFW/msl/$MSLDIR"
+    if [ -f "$OUTFW/msl/$MSLDIR.img" ]; then rsync -a -- "$LIB" "$OUTFW/msl/$MSLDIR.img"; else cp -cp -- "$LIB" "$OUTFW/msl/$MSLDIR.img"; fi || die "copy the shader libraries"
+  else
+    rm -f "$OUTFW/msl/$MSLDIR.img"
+    mkdir -p "$OUTFW/msl/$MSLDIR" && rsync -a --delete -- "$LIB/" "$OUTFW/msl/$MSLDIR/" || die "copy the shader libraries"
+  fi
+  for old in "$OUTFW/msl/"*; do case "$old" in "$OUTFW/msl/$MSLDIR"|"$OUTFW/msl/$MSLDIR.img") ;; *) rm -rf "$old";; esac; done
   if [ -n "$PSO" ]; then mkdir -p "$OUTFW/pso" && rsync -a --delete -- "$PSO/" "$OUTFW/pso/" || die "copy the pipeline archive"; else rm -rf "$OUTFW/pso"; fi
   if [ -f "$ICON" ]; then sips -s format png -z 512 512 "$ICON" --out "$OUTFW/icon.png" > /dev/null || die "sips: cannot convert the icon $ICON"; else rm -f "$OUTFW/icon.png"; fi
   python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); sys.exit(m["framework_executable"] != sys.argv[2])' "$OUTFW/game.manifest.json" "$FW_NAME" \

@@ -1,13 +1,15 @@
 """Route C M1 (docs/launcher-c-plan.md): the opt-in framework build's packaging and signing, off a device.
 
-Three parts, each on synthetic inputs, no game files or Xcode:
+Four parts, each on synthetic inputs, no game files or Xcode:
   - gen_manifest.py writes the schema's keys, and refuses values the schema cannot carry;
   - build_ipa.sh's --prepare-xcode block copies project-framework.yml in as the project when DM_FRAMEWORK=1, and
     project.yml when it is not (the default template is never edited);
   - the framework is signed before the app's executable, the framework's signature carries no entitlements, the app's
     keeps the Increased Memory Limit request, and the packed IPA has the framework where the app dlopens it. A default
-    pack (no DM_FRAMEWORK) still has no Frameworks/ entry at all.
-Only the signing and packing steps run (a stand-in app and framework, no Xcode); codesign is required for the last part.
+    pack (no DM_FRAMEWORK) still has no Frameworks/ entry at all;
+  - DM_FRAMEWORK_ONLY puts the game's shader libraries into the framework in the form they have: an NVN game's one file
+    b-<chain>.img (dm/tools/shader_lib.py) as msl/b-<chain>.img, a folder as msl/<folder>, and a rebuild leaves only that one.
+Only the signing and packing steps run (a stand-in app and framework, no Xcode); codesign is required for the third part.
 """
 import json
 import os
@@ -30,6 +32,9 @@ FRAMEWORK_SIGNING = SCRIPT[SCRIPT.index('# Route C: the framework is signed firs
 SIGNING = SCRIPT[SCRIPT.index('# The entitlements of an unsigned IPA'):SCRIPT.index('\nP=Payload/DmIOS.app\n')]
 PACKING = SCRIPT[SCRIPT.index('\nP=Payload/DmIOS.app\n'):]
 PREPARE = SCRIPT[SCRIPT.index('if [ "$PREPARE_XCODE" = YES ]; then'):SCRIPT.index('\nelse DM_SCHEME_NAME=DmIOS; fi')] + '\nfi\n'
+# DM_FRAMEWORK_ONLY's block, after the helper it finds the shader libraries with
+FRAMEWORK_ONLY = (next(line for line in SCRIPT.splitlines() if line.startswith('lib_path() ')) + '\n' +
+                  SCRIPT[SCRIPT.index('# DM_FRAMEWORK_ONLY: the framework target alone'):SCRIPT.index('\nt "xcodebuild (Release, unsigned, iPhone + iPad)"')] + '\n')
 PREAMBLE = 'set -u\nt() { :; }; die() { echo "$*" >&2; exit 1; }\ngp() { python3 "$PROFILE_TOOL" "$GAME" "$1"; }\n'
 CAN_SIGN = sys.platform == 'darwin' and shutil.which('codesign') and shutil.which('cc')
 
@@ -226,6 +231,77 @@ class FrameworkPackagingTests(unittest.TestCase):
         verified = subprocess.run(['codesign', '-vvv', '--verify', '--strict', str(extracted / 'Frameworks/DmGame.framework')],
                                   capture_output=True, text=True)
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
+
+
+@unittest.skipUnless(sys.platform == 'darwin', 'build_ipa.sh copies an image with macOS cp -c (clonefile)')
+class FrameworkOnlyShaderLibrariesTests(unittest.TestCase):
+    """DM_FRAMEWORK_ONLY's copy of the shader libraries into the game's framework, after a stand-in xcodebuild; no Xcode, no game files."""
+    FW = 'DmGame' + GAME
+
+    def setUp(self):
+        self.root = root = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, root)
+        (root / 'dm').mkdir()
+        (root / 'dm/tools').symlink_to(REPO / 'dm/tools', target_is_directory=True)
+        (root / 'bin').mkdir()
+        (root / 'bin/xcodebuild').write_text('#!/bin/sh\nexit 0\n')
+        (root / 'bin/xcodebuild').chmod(0o755)
+        built = root / 'dd/Build/Products/Release-iphoneos' / f'{self.FW}.framework'   # what the framework target builds
+        built.mkdir(parents=True)
+        (built / self.FW).write_text('dylib')
+        (built / 'game.manifest.json').write_text(json.dumps({'framework_executable': self.FW}))
+        self.out = root / 'out' / f'{self.FW}.framework'
+
+    def library(self, packed, content='shader'):
+        """The NSP script's shader libraries: the folder dmsh_build.py writes, or the one file shader_lib.py packs it into."""
+        folder, image = self.root / 'shaders/b-fixture', self.root / 'shaders/b-fixture.img'
+        shutil.rmtree(folder, ignore_errors=True)
+        image.unlink(missing_ok=True)
+        folder.mkdir(parents=True)
+        (folder / 'fixture_b.metallib').write_text(content)
+        if packed:
+            result = subprocess.run([sys.executable, str(REPO / 'dm/tools/shader_lib.py'), 'pack', str(folder)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(folder.exists())
+            self.assertTrue(image.is_file())
+        return image if packed else folder
+
+    def build(self):
+        root = self.root
+        result = run_step(FRAMEWORK_ONLY, root, FRAMEWORK_ONLY=str(root / 'out'), FW_NAME=self.FW, O=str(root / 'pkg'), DD=str(root / 'dd'),
+                          DM_BUNDLE_ID='org.nxnative.fixture', MSL_IOS=str(root / 'shaders'), MSLDIR='b-fixture', PSO='',
+                          ICON=str(root / 'no-icon.jpg'), PATH=f'{root / "bin"}:{os.environ["PATH"]}')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.out / self.FW).is_file())
+
+    def shaders(self):
+        return sorted(p.name for p in (self.out / 'msl').iterdir())
+
+    def test_a_packed_library_goes_in_as_its_one_file(self):
+        image = self.library(packed=True)
+        self.build()
+        self.assertEqual(self.shaders(), ['b-fixture.img'])
+        self.assertEqual((self.out / 'msl/b-fixture.img').read_bytes(), image.read_bytes())
+
+    def test_a_library_folder_goes_in_as_a_folder(self):
+        self.library(packed=False)
+        self.build()
+        self.assertEqual(self.shaders(), ['b-fixture'])
+        self.assertEqual((self.out / 'msl/b-fixture/fixture_b.metallib').read_text(), 'shader')
+
+    def test_a_rebuild_leaves_only_the_current_library(self):
+        (self.out / 'msl/b-fixture').mkdir(parents=True)   # an earlier build's folder, and another chain's library
+        (self.out / 'msl/b-fixture/stale_b.metallib').write_text('stale')
+        (self.out / 'msl/b-otherchain.img').write_text('other chain')
+        self.library(packed=True)
+        self.build()
+        self.assertEqual(self.shaders(), ['b-fixture.img'])
+        image = self.library(packed=True, content='a newer shader')
+        self.build()
+        self.assertEqual((self.out / 'msl/b-fixture.img').read_bytes(), image.read_bytes())
+        self.library(packed=False)
+        self.build()
+        self.assertEqual(self.shaders(), ['b-fixture'])
 
 
 if __name__ == '__main__':
