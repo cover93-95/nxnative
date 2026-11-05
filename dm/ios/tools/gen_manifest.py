@@ -63,7 +63,7 @@ def manifest(args):
         'modules': modules,
         'nro_count': nro_count(args.nro_table),
         'chain': args.chain,
-        'loader': 'FR',                # a pure module container: the shell is the host (design §1.1 FR)
+        'loader': args.loader,
         'framework': args.framework_name + '.framework',
         'framework_executable': args.framework_name,
         'image_marker': IMAGE_MARKER,
@@ -95,6 +95,8 @@ def main(argv=None):
     ap.add_argument('--framework-name', default=FRAMEWORK_EXECUTABLE,
                     help='the framework\'s product name: DmGame in the one-game app (M1), DmGame<title ID> in the shell, where several '
                          'games\' frameworks sit side by side in Frameworks/')
+    ap.add_argument('--loader', default='FR', choices=('FR', 'FH'),
+                    help='FR: a module container whose host is the app (M1); FH: the framework carries its own host (the shell, #451)')
     ap.add_argument('--built-by', help='who built it, for a log line (optional; a device or tool name)')
     args = ap.parse_args(argv)
     data = manifest(args)

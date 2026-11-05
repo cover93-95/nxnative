@@ -131,6 +131,62 @@ targets:
       # No SYMROOT/OBJROOT/CONFIGURATION_BUILD_DIR of its own: the framework builds where the app does (xcodebuild's
       # SYMROOT in build_ipa.sh, the pinned DerivedData of a prepared workspace in Xcode), and the app's embed phase copies
       # it from there. The app target keeps project.yml's paths, which reference the generated DM_XCODE_OUTPUT_ROOT.
+  DmShellGame:
+    type: framework
+    platform: iOS
+    # Route C shell (LNPANDY/NX2Apple#451): each game's DmGame<title ID>.framework links its own dm/host, front_ios.m and
+    # embedded modules (Gen/dm.xcconfig: gen_build.py's header paths, defines and frameworks + gen_embed.py's segment flags),
+    # so an engine update never invalidates the games already in the shell.
+    configFiles:
+      Release: Gen/dm.xcconfig
+      Debug: Gen/dm.xcconfig
+    sources:
+      - path: Gen/embed.S
+      - path: Gen/src
+      - path: Gen/main/main.c
+        compilerFlags: "-Dmain=dm_main"
+      - path: framework/DmGameMarker.m
+      - path: framework/ShellGlue.m
+      - path: Sources/front_ios.m
+      - path: Sources/DmGamepad.m
+      - path: Sources/GameMenu.swift
+      - path: Sources/LauncherSettings.swift
+      - path: Sources/CloudSaves.m
+      - path: Sources/SaveSync.m
+      - path: Sources/DataBookmark.m
+      - path: Gen/framework/dm
+        type: folder
+        buildPhase: resources
+      - path: Gen/framework/profile.tsv
+        buildPhase: resources
+      - path: Gen/framework/game.manifest.json
+        buildPhase: resources
+    info:
+      path: Gen/framework/ShellGame-Info.plist
+      properties:
+        CFBundleDisplayName: ${DM_DISPLAY_NAME}
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: ${DM_BUNDLE_ID}.DmGame
+      PRODUCT_NAME: DmGame
+      MARKETING_VERSION: ${DM_APP_VERSION}
+      CURRENT_PROJECT_VERSION: ${DM_APP_VERSION}
+      DEVELOPMENT_TEAM: ${DM_TEAM_ID}
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_ENTITLEMENTS: ""
+      SKIP_INSTALL: YES
+      DYLIB_INSTALL_NAME_BASE: "@rpath"
+      DEFINES_MODULE: NO
+      ENABLE_BITCODE: NO
+      GCC_C_LANGUAGE_STANDARD: gnu11
+      SWIFT_VERSION: "5.0"
+      OTHER_SWIFT_FLAGS: $(inherited) -import-objc-header $(SRCROOT)/Sources/DmGameMenu.h
+      OTHER_CFLAGS: $(inherited) -mcpu=apple-a18
+      OTHER_LDFLAGS: $(inherited) -framework UIKit -framework UserNotifications
+      CLANG_ENABLE_OBJC_ARC: YES
+      DEBUG_INFORMATION_FORMAT: dwarf
+      GCC_WARN_INHIBIT_ALL_WARNINGS: YES
 schemes:
   ${DM_SCHEME_NAME}:
     build:
