@@ -1,5 +1,5 @@
 // Mac: split a Bluetooth Joy-Con pair into two sideways controllers (pad_joycon.h, LNPANDY/NX2Apple#740).
-// When DM_JOYCON_SPLIT=1 is set, front_mac.m skips GameController's combined Joy-Con entry and reads Joy-Con (L) (0x057e:0x2006)
+// When DM_JOYCON_SPLIT=1 is set, controllers_mac.m skips GameController's combined Joy-Con entry and reads Joy-Con (L) (0x057e:0x2006)
 // and Joy-Con (R) (0x057e:0x2007) directly with IOHIDManager so each half gets its own player slot.
 #pragma once
 #import <IOKit/hid/IOHIDManager.h>
