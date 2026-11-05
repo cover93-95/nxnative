@@ -92,6 +92,7 @@ DM_JIT_CAPTURE	path	Folder the Mac host writes what a game's `nn::jit` plugin ma
 DM_JIT_LOG	diagnostic	`1` logs every `nn::jit` `GenerateCode` request
 DM_JIT_MISS_DUMP	diagnostic	Folder for the input of each `nn::jit` request a served image lacks
 DM_JIT_SERVE	path	Folder of a `nn::jit` image (`jit.img`, `jit.tsv`, `jit.out`): the Mac serves requests from it as the iOS app does, and the plugin does not run
+DM_JOYCON_SPLIT	switch	`1` splits a Bluetooth Nintendo Switch Joy-Con pair on macOS (`0x057e:0x2006` and `0x057e:0x2007`) into two sideways controllers over `IOHIDManager` (`pad_joycon_mac.h`, requires Input Monitoring permission) with per-half 6-axis motion and `LeftHandle` / `RightHandle` Core Haptics rumble
 DM_KBD	switch	`=<text>`: the system keyboard returns that text as OK without showing an input box; unset with no window, it returns cancel
 DM_KBD_PLAYER	switch	`own` makes the Mac keyboard player 1 on its own, with controllers from player 2 on (by default the first controller shares player 1 with the keyboard)
 DM_KEYMAP	player	Mac keyboard: `<name>=<key code>,…` puts a button (`A` … `Down`), a stick direction (`LUp` … `RRight`) or `Shake` on another key (macOS virtual key code, or `none`); one key holds one function (`input_map.h`)
