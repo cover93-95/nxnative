@@ -120,6 +120,27 @@ class ProjectTemplateTests(unittest.TestCase):
         self.assertEqual(self.prepare(0), ('name: default\n', False))
 
 
+class FrameworkEnvironmentTests(unittest.TestCase):
+    def test_build_environment_stays_with_its_framework(self):
+        block = SCRIPT[SCRIPT.index('if [ "$FRAMEWORK" = 1 ]; then\n  rm -rf Gen/framework'):SCRIPT.index('# A prepared Xcode project is signed')]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'Gen/dm/font').mkdir(parents=True)
+            (root / 'patched').mkdir()
+            (root / 'dm').symlink_to(REPO / 'dm', target_is_directory=True)
+            (root / 'Gen/dm/env.txt').write_text('DM_PROF_TEX_BC_CPU=1\n')
+            (root / 'Gen/dm/font/font.ttf').write_text('font')
+            (root / 'Gen/dm/launcher.json').write_text('{}')
+            (root / 'tools').symlink_to(REPO / 'dm/ios/tools', target_is_directory=True)
+            result = run_step(block, root, FRAMEWORK='1', FRAMEWORK_ONLY='out', FW_NAME='DmGame' + GAME,
+                              PATCHED=str(root / 'patched'), ROMFS=str(root / 'none'), PREPARE_XCODE='NO', DM_COPY_ROMFS='NO',
+                              DM_DISPLAY_NAME='Fixture', DM_APP_VERSION='1.0', MODS='main', V='fixture', MARKER='marker', F='')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((root / 'Gen/framework/dm/env.txt').is_file(), 'the built framework must carry its environment')
+            self.assertEqual((root / 'Gen/framework/dm/env.txt').read_text(), 'DM_PROF_TEX_BC_CPU=1\n')
+            self.assertFalse((root / 'Gen/framework/dm/font').exists())
+
+
 class FrameworkPackagingTests(unittest.TestCase):
     """The signing and pack steps on a stand-in app; no Xcode, no game files."""
 

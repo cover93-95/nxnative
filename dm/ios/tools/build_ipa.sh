@@ -202,7 +202,8 @@ else t "no app icon ($ICON not found): the home-screen icon stays blank"; fi
 if [ "$FRAMEWORK" = 1 ]; then
   rm -rf Gen/framework && mkdir -p Gen/framework/dm || die "mkdir Gen/framework"
   cp -R Gen/dm/. Gen/framework/dm/ || die "copy the framework tables"
-  rm -rf Gen/framework/dm/font Gen/framework/dm/env.txt
+  rm -rf Gen/framework/dm/font
+  # Keep dm/env.txt with this game: the shell applies its build-time defaults after the player's environment files.
   # The one-game app reads its launcher.json from the app's dm/; the shell reads each game's from its framework (manifest key launcher)
   [ -n "$FRAMEWORK_ONLY" ] || rm -f Gen/framework/dm/launcher.json
   python3 "$DM/games/game.py" profile "$GAME" Gen/framework/profile.tsv > /dev/null || die "game profile"
