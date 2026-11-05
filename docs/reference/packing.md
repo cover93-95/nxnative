@@ -40,6 +40,13 @@
 
 ## Build tools
 
+### The Mac host build starts an older Python than the pipeline
+
+- **Symptom:** the Mac host step fails in `host_msl.py` with `TypeError: __init__() got an unexpected keyword argument 'capture_output'`, although the launcher reports a recent bundled Python.
+- **Cause:** the pipeline runs under the selected interpreter, but the host Makefile started `python3` by name. The pipeline's tool folders could put an older installation before the bundled interpreter on `PATH`.
+- **Fix:** `build_mac_host` passes its exact `sys.executable` to both Make invocations as `PYTHON`. The host Makefile quotes that setting for its shader and profile generators, including parse-time profile lookup. Direct Make builds default to `python3` and can set `PYTHON` explicitly. `PATH` and .NET SDK selection are unchanged. Synthetic tests execute the real shader-header target with an unusable `python3` on `PATH` and an explicitly selected versioned interpreter in a path with spaces.
+- **Found on:** [Animal Crossing: New Horizons](../../dm/games/01006F8002326000/README.md), version 3.0.0, reported with bundled Python 3.13 and a child Python 3.6 in [NX2Apple issue #711](https://github.com/LNPANDY/NX2Apple/issues/711). The interpreter failure was reproduced synthetically, without game files or a gameplay check.
+
 ### Homebrew .NET is on PATH but apphosts cannot find the runtime
 
 - **Symptom:** the first extraction stops with `nx_extract exit code 131` and `.NET location: Not found`, even though `dotnet` is on `PATH`. The shader translator can fail the same way.
