@@ -35,14 +35,14 @@ def font_python():
     return None
 
 
-def framework(root, title=GAME, chain=CHAIN, loader='FH', name=None, executable=True, compile_it=False):
+def framework(root, title=GAME, chain=CHAIN, name=None, executable=True, compile_it=False):
     """A framework folder as build_ipa.sh DM_FRAMEWORK_ONLY writes it, with a manifest and, optionally, a real arm64 dylib."""
     name = name or f'DmGame{title}'
     fw = Path(root) / f'{name}.framework'
     (fw / 'dm').mkdir(parents=True)
     exe = f'DmGame{title}'
     manifest = {'schema': 1, 'title_id': title, 'name': f'Fixture {title}', 'display_version': '1.0', 'package_version': 'v0',
-                'modules': ['main'], 'nro_count': 0, 'chain': chain, 'loader': loader, 'framework': f'DmGame{title}.framework',
+                'modules': ['main'], 'nro_count': 0, 'chain': chain, 'loader': 'FR', 'framework': f'DmGame{title}.framework',
                 'framework_executable': exe, 'image_marker': 'dmgame_image_marker', 'profile': 'profile.tsv',
                 'shader_map': 'dm/shader_map.tsv', 'launcher': 'dm/launcher.json', 'romfs_marker': 'fixture.marker',
                 'romfs_identity': '', 'min_os': '26.0'}
@@ -82,21 +82,20 @@ class FrameworkChecks(unittest.TestCase):
         self.assertIn(text, r.stdout + r.stderr)
         self.assertFalse((self.shell / 'Gen').exists(), 'nothing is generated for a refused set')
 
-    def test_a_framework_without_its_host_is_refused(self):
-        self.refused([framework(self.root, loader='FR')], 'built without a host in the framework')
+    def test_another_chain_is_refused(self):
+        self.refused([framework(self.root, chain='b-000000000000')], 'built for shader chain b-000000000000')
 
     def test_two_frameworks_of_one_title_are_refused(self):
         a = framework(self.root / 'a')
         b = framework(self.root / 'b')
         self.refused([a, b], f'title ID {GAME} is already in the shell')
 
-    def test_two_games_of_different_chains_go_into_one_shell(self):
-        # Checked only up to the frameworks list here (the generation needs XcodeGen): each framework carries its own host,
-        # so two games built on different shader chains go into one shell together
-        r = run_script('--prepare-xcode', [framework(self.root / 'a', chain='b-000000000000'), framework(self.root / 'b', title=OTHER, chain=CHAIN)],
-                       self.shell, PATH='/usr/bin:/bin')
+    def test_two_games_go_into_one_shell(self):
+        # Checked only up to the frameworks list here (the generation needs XcodeGen): both games, the first one's profile compiled in
+        r = run_script('--prepare-xcode', [framework(self.root / 'a'), framework(self.root / 'b', title=OTHER)], self.shell, PATH='/usr/bin:/bin')
         rows = (self.shell / 'frameworks.txt').read_text().splitlines()
         self.assertEqual([row.split('\t')[0] for row in rows], [GAME, OTHER], r.stdout)
+        self.assertIn(f'compiled defaults of {GAME}', r.stdout)
 
     def test_a_folder_the_manifest_does_not_name_is_refused(self):
         self.refused([framework(self.root, name='Renamed')], f'the manifest names DmGame{GAME}.framework')
@@ -114,17 +113,15 @@ class FrameworkChecks(unittest.TestCase):
 
 
 class ShellMainProvidesWhatFrontIosTakes(unittest.TestCase):
-    """front_ios.m is compiled into each game's framework unchanged and main.m is not linked, so ShellGlue.m has to
-    define every function front_ios.m declares as coming from main.m and the glue symbols ShellMain.m looks up with dlsym."""
-    def test_every_symbol_front_ios_and_shell_main_take_is_defined(self):
+    """front_ios.m is compiled into the shell unchanged and main.m is not linked, so ShellMain.m has to define every function
+    front_ios.m declares as coming from main.m (a missing one is a link error of every shell build, found only on a device build)."""
+    def test_every_symbol_front_ios_takes_from_main_m_is_defined(self):
         front = (REPO / 'dm/ios/Sources/front_ios.m').read_text()
         wanted = re.findall(r'^[A-Za-z_][\w \t\*]*?\b(\w+)\([^)]*\);[ \t]*//[^\n]*\bmain\.m\b', front, re.M)
         self.assertIn('front_ios_boot_message', wanted)   # the scan finds the declarations at all
-        glue = (REPO / 'dm/ios/framework/ShellGlue.m').read_text()
-        wanted_all = [*dict.fromkeys(wanted), 'dm_glue_start_game', 'dm_glue_present_game', 'dm_glue_focus_event']
-        missing = [n for n in wanted_all if not re.search(r'^[A-Za-z_][\w \t\*]*?\b' + n + r'\([^)]*\)[ \t]*\{', glue, re.M)]
-        self.assertEqual(missing, [], 'ShellGlue.m does not define what front_ios.m and ShellMain.m take')
-        self.assertIn('dm_glue_version =', glue)
+        shell = (REPO / 'dm/ios/Shell/ShellMain.m').read_text()
+        missing = [n for n in dict.fromkeys(wanted) if not re.search(r'^[A-Za-z_][\w \t\*]*?\b' + n + r'\([^)]*\)[ \t]*\{', shell, re.M)]
+        self.assertEqual(missing, [], 'ShellMain.m does not define what front_ios.m takes from main.m')
 
 
 @unittest.skipUnless(HAS_TOOLS and font_python(), 'needs macOS, XcodeGen, an iPhoneOS SDK and a python with fontTools')

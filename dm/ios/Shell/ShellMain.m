@@ -1,22 +1,29 @@
-// Route C shell (docs/launcher-c-plan.md M2, LNPANDY/NX2Apple#451): the app that hosts several games' frameworks. It starts on the
+// Route C shell (docs/launcher-c-plan.md M2): the app that hosts the engine and several games' frameworks. It starts on the
 // library (frontend-ios's ShellHost views, ShellApp.swift) instead of booting a game at launch as dm/ios/Sources/main.m does, and
-// when the player presses Play, dm_shell_start_game() sets the log and the environment (EngineLaunchPlan in ShellHost computes it),
-// dlopens the chosen game's DmGame<title ID>.framework (which links its own dm/host, front_ios.m and shaders), and calls its
-// dm_glue_start_game() entry point (ShellGlue.h, framework/ShellGlue.m). dm_shell_present_game() then hands the window to the
-// framework's dm_glue_present_game(), which shows front_ios.m's game view and starts dm_main on the big-stack thread.
+// when the player presses Play, dm_shell_start_game() does what main.m's boot_env() does before UIApplicationMain, for the chosen
+// game: the log, the environment (EngineLaunchPlan in ShellHost computes it), dlopen of the game's framework and its mach header for
+// the loader, and the host's early loading. dm_shell_present_game() then hands the window to front_ios.m's game view, which starts
+// dm_main on the big-stack thread through front_ios_boot() below.
 // One game per process: dm_profile() and dm_host_preload_start() run once, so returning to the library is a relaunch of the app.
+// This file provides the symbols front_ios.m takes from main.m and Launcher.swift in the one-game app (front_ios_boot,
+// front_ios_boot_ok, front_ios_boot_message, front_ios_device_check, dm_locate_game_data, dm_show_launcher): the shell compiles front_ios.m unchanged.
 #import <UIKit/UIKit.h>
 #include <dlfcn.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
+#include "front.h"
 #include "ShellEngine.h"
-#include "ShellGlue.h"
 #import "DmShell-Swift.h"
 
-static dm_glue_present_fn g_present;
-static dm_glue_focus_fn g_focus;
-static int g_boot_ok;
+int dm_main(int argc, char **argv);   // dm/host/main.c compiled in with -Dmain=dm_main
+UIViewController *front_ios_root(void);
+void front_ios_focus_event(int ev);
+
+static char **g_argv; static int g_argc; static int g_boot_ok;
 
 static NSString *documents(void) { return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0]; }
 
@@ -45,9 +52,10 @@ const char *dm_shell_start_game(const char *const *keys, const char *const *valu
         fprintf(stderr, "boot: %s=%s\n", keys[i], values[i]);   // every one: a report then shows which of the game's settings reached the engine
     }
     if (cwd && *cwd) chdir(cwd);
-    // dlopen + dlsym + dladdr verify the framework's image and find its own host's entry points (ShellGlue.h, framework/ShellGlue.m),
-    // after the environment is set and before the framework's host starts loading.
-    void *h = dlopen(executable, RTLD_LAZY | RTLD_LOCAL);
+    front_hud_env();   // before the early loading below can make a device (main.m's order)
+    // dlopen + dlsym + dladdr hand the framework's mach header to the loader, after the environment and before loading starts
+    // (the design's order, FrameworkBootstrap.m in the one-game app). RTLD_LAZY: only its sections and the marker are needed.
+    void *h = dlopen(executable, RTLD_LAZY);
     if (!h) {
         snprintf(err, sizeof err, "The game's code could not be loaded: %s", dlerror() ?: "no reason given");
         fprintf(stderr, "[RED] boot: dlopen %s failed: %s\n", executable, err);
@@ -61,25 +69,11 @@ const char *dm_shell_start_game(const char *const *keys, const char *const *valu
         fprintf(stderr, "[RED] boot: %s: %s\n", executable, err);
         return err;
     }
-    const int *ver = dlsym(h, "dm_glue_version");
-    dm_glue_start_fn start = (dm_glue_start_fn)dlsym(h, "dm_glue_start_game");
-    dm_glue_present_fn present = (dm_glue_present_fn)dlsym(h, "dm_glue_present_game");
-    dm_glue_focus_fn focus = (dm_glue_focus_fn)dlsym(h, "dm_glue_focus_event");
-    if (!ver || *ver != DM_GLUE_VERSION || !start || !present || !focus) {
-        snprintf(err, sizeof err, "This game's framework was built without its host (glue version %d, expected %d). Rebuild the game in the launcher.",
-                 ver ? *ver : 0, DM_GLUE_VERSION);
-        fprintf(stderr, "[RED] boot: %s: %s\n", executable, err);
-        return err;
-    }
-    fprintf(stderr, "boot: game framework %s (handle %p, image base %p, glue v%d)\n", executable, h, info.dli_fbase, *ver);
-    const char *why = start(argv, argc, info.dli_fbase);
-    if (why) {
-        snprintf(err, sizeof err, "%s", why);
-        fprintf(stderr, "[RED] boot: %s: %s\n", executable, err);
-        return err;
-    }
-    g_present = present;
-    g_focus = focus;
+    dm_set_game_image_header(info.dli_fbase);   // valid for the process's life: the framework is never dlclose()d
+    fprintf(stderr, "boot: game framework %s (handle %p, image base %p)\n", executable, h, info.dli_fbase);
+    g_argc = argc; g_argv = calloc((size_t)argc + 1, sizeof(char *));
+    for (int i = 0; i < argc; i++) g_argv[i] = strdup(argv[i]);
+    dm_host_preload_start(g_argc, g_argv);   // module tables, relocation and take-over in the background while the game view comes up
     g_boot_ok = 1;
     return NULL;
 }
@@ -88,9 +82,40 @@ void dm_shell_present_game(void) {
     UIWindow *window = nil;
     for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
         if ([s isKindOfClass:UIWindowScene.class]) for (UIWindow *w in ((UIWindowScene *)s).windows) if (w.isKeyWindow || !window) window = w;
-    if (!window || !g_present) { fprintf(stderr, "[RED] shell: no window for the game view\n"); return; }
-    g_present((__bridge void *)window);
+    if (!window) { fprintf(stderr, "[RED] shell: no window for the game view\n"); return; }
+    UIViewController *game = front_ios_root();   // DmRootVC: landscape, its viewDidAppear starts the game (no settings screen: dm_show_launcher)
+    window.rootViewController = game;
+    [game setNeedsUpdateOfSupportedInterfaceOrientations];
+    [window.windowScene requestGeometryUpdateWithPreferences:[[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:UIInterfaceOrientationMaskLandscape]
+                                                errorHandler:^(NSError *e) { fprintf(stderr, "shell: landscape request: %s\n", e.localizedDescription.UTF8String); }];
 }
+
+// ---- what front_ios.m takes from main.m and Launcher.swift ----
+static void *boot_thread(void *p) {
+    (void)p;
+    static char alt[65536]; stack_t ss = {.ss_sp = alt, .ss_size = sizeof alt}; sigaltstack(&ss, 0);   // crash printing must work on the host thread too
+    int rc = dm_main(g_argc, g_argv);
+    fprintf(stderr, "boot: dm_main returned %d\n", rc);
+    return NULL;
+}
+void front_ios_boot(void) {   // front_ios.m, once the game view exists
+    static int once; if (once++ || !g_boot_ok) return;
+    void front_ios_audio_session(void); front_ios_audio_session();
+    pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 64u << 20);
+    pthread_t t; pthread_create(&t, &a, boot_thread, NULL); pthread_detach(t);
+}
+int front_ios_boot_ok(void) { return g_boot_ok; }
+const char *front_ios_boot_message(void) { return NULL; }
+const char *front_ios_device_check(void) { return NULL; }   // main.m checks the GPU for the games (no BC textures, seedds#704) when Play is pressed, the shell does its own device handling: NULL = supported
+// The shell found the data before Play (DataLocator, EngineLaunchPlan): DM_ROMFS is set and the game view only checks it is still there
+int dm_locate_game_data(void) {
+    const char *r = getenv("DM_ROMFS"); struct stat st;
+    if (r && !stat(r, &st)) return 1;
+    fprintf(stderr, "[RED] shell: the game data at %s is gone\n", r ?: "(not set)");
+    return 0;
+}
+// The shell showed its own settings before Play: the game view starts the game at once
+bool dm_show_launcher(void *view_controller, void (*done)(void)) { (void)view_controller; (void)done; return false; }
 
 @interface App : UIResponder <UIApplicationDelegate>
 @end
@@ -120,11 +145,11 @@ static UIInterfaceOrientationMask shell_orientations(UITraitCollection *traits) 
     self.window.rootViewController = [ShellLibrary makeController];
     [self.window makeKeyAndVisible];
 }
-// Forwarded to the running game framework's front_ios.m once a game has started
-- (void)sceneWillResignActive:(UIScene *)s { (void)s; if (g_focus) g_focus(0); }
-- (void)sceneDidEnterBackground:(UIScene *)s { (void)s; if (g_focus) g_focus(1); }
-- (void)sceneWillEnterForeground:(UIScene *)s { (void)s; if (g_focus) g_focus(2); }
-- (void)sceneDidBecomeActive:(UIScene *)s { (void)s; if (g_focus) g_focus(3); }
+// front_ios.m ignores these until the game view exists
+- (void)sceneWillResignActive:(UIScene *)s { front_ios_focus_event(0); }
+- (void)sceneDidEnterBackground:(UIScene *)s { front_ios_focus_event(1); }
+- (void)sceneWillEnterForeground:(UIScene *)s { front_ios_focus_event(2); }
+- (void)sceneDidBecomeActive:(UIScene *)s { front_ios_focus_event(3); }
 @end
 
 // The performance HUD (the per-game setting DM_METAL_HUD) needs MTL_HUD_ENABLED in the environment before Metal starts in this

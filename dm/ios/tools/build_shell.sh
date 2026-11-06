@@ -29,19 +29,18 @@ MODE=${1:-}; case "$MODE" in --prepare-xcode|--build) ;; *) die "usage: $0 --pre
 [ -n "${DM_SHELL_FRAMEWORKS:-}" ] || die "DM_SHELL_FRAMEWORKS is not set: the games' framework folders, one per line"
 mkdir -p "$SHELL_DIR" || die "mkdir $SHELL_DIR"; S=$(cd "$SHELL_DIR" && pwd)
 [ "$S" != "$IOS_SOURCE" ] || die "the shell project must be outside dm/ios"
-[ -n "${DM_SHELL_PACKAGE:-}" ] || { [ -f "$REPO/frontend-ios/Package.swift" ] && DM_SHELL_PACKAGE=$REPO/frontend-ios || DM_SHELL_PACKAGE=$(cd "$REPO/.." && pwd)/frontend-ios; }
-export DM_SHELL_PACKAGE
+export DM_SHELL_PACKAGE=${DM_SHELL_PACKAGE:-$REPO/frontend-ios}
 [ -f "$DM_SHELL_PACKAGE/Package.swift" ] || die "no Swift package at $DM_SHELL_PACKAGE (DM_SHELL_PACKAGE)"
 export LC_ALL=C DM_BUNDLE_ID=${DM_BUNDLE_ID:-org.nxnative.shell} DM_TEAM_ID=${DM_TEAM_ID:-0000000000} DM_SHELL_NAME=${DM_SHELL_NAME:-NX2Apple} DM_APP_VERSION=${DM_APP_VERSION:-1.0}
 export DM_FORK_PATCHES=$(paste -sd, "$DM/fork_patches.txt" 2>/dev/null || true)
 DD=${DM_XCODE_DERIVED_DATA:-$S/dd}; mkdir -p "$DD" && DD=$(cd "$DD" && pwd)
 V=$(sed -n 's/^#define DMSH_CHAIN "\(.*\)"/\1/p' "$DM/gfx/nvn/dmsh_chain.h"); [ -n "$V" ] || die "no DMSH_CHAIN in dm/gfx/nvn/dmsh_chain.h"
 
-# Every framework: a manifest with its own host (loader FH), its executable, a title ID of its own
+# Every framework: a manifest of this chain, its executable, a title ID of its own. The first one's profile is the host's
 FWLIST=$S/frameworks.txt
-python3 -I - "$FWLIST" <<'PY' || die "the frameworks in DM_SHELL_FRAMEWORKS (above)"
+python3 -I - "$V" "$FWLIST" <<'PY' || die "the frameworks in DM_SHELL_FRAMEWORKS (above)"
 import json, os, sys
-out = sys.argv[1]
+chain, out = 'b-' + sys.argv[1], sys.argv[2]
 paths = [p.strip() for p in os.environ['DM_SHELL_FRAMEWORKS'].splitlines() if p.strip()]
 if not paths: sys.exit('[RED] no framework named')
 seen, rows = {}, []
@@ -52,20 +51,21 @@ for p in paths:
     name, exe, tid = m.get('framework'), m.get('framework_executable'), m.get('title_id', '')
     if os.path.basename(p) != name: sys.exit(f'[RED] {p}: the manifest names {name}')
     if not os.path.isfile(os.path.join(p, exe or '-')): sys.exit(f'[RED] {p}: no executable {exe} (build_ipa.sh DM_FRAMEWORK_ONLY builds it)')
-    if m.get('loader') != 'FH': sys.exit(f'[RED] {p}: built without a host in the framework (loader {m.get("loader")!r}). Rebuild this game for the shared app.')
+    if m.get('chain') != chain: sys.exit(f'[RED] {p}: built for shader chain {m.get("chain")}, this checkout is {chain}: build the game again')
     if tid in seen: sys.exit(f'[RED] {p}: title ID {tid} is already in the shell ({seen[tid]})')
     seen[tid] = p; rows.append((tid, p, m.get('name', '')))
 with open(out, 'w', encoding='utf-8') as f:
     for tid, p, name in rows: f.write(f'{tid}\t{p}\t{name}\n')
 PY
 export GAME=$(head -1 "$FWLIST" | cut -f1)
-t "shell: $DM_SHELL_NAME ($DM_BUNDLE_ID), games: $(cut -f3 "$FWLIST" | paste -sd, -)"
+t "shell: $DM_SHELL_NAME ($DM_BUNDLE_ID), compiled defaults of $GAME, games: $(cut -f3 "$FWLIST" | paste -sd, -)"
 
-t "generate Gen/ (shared files, the project)"
+t "generate Gen/ (host sources, shared files, the project)"
 for item in Sources Shell tools; do ln -sfn "$IOS_SOURCE/$item" "$S/$item" || die "link $item"; done
 cd "$S" || die "cd $S"
 rm -rf Gen && mkdir -p Gen/dm/font || die "mkdir Gen"
-: > Gen/dm.xcconfig || die "dm.xcconfig"
+python3 "$IOS_SOURCE/tools/gen_build.py" "$DM/host" Gen > Gen/dm.xcconfig || die "gen_build"
+echo 'OTHER_LDFLAGS = $(inherited) $(DM_FRAMEWORKS)' >> Gen/dm.xcconfig
 cp "${STD_FONT:-/System/Library/Fonts/Supplemental/Arial Unicode.ttf}" Gen/dm/font/standard.ttf || die "copy standard font (STD_FONT=a TTF)"
 "${FONT_PY:-python3}" "$DM/tools/make_ext_font.py" Gen/dm/font/nintendo_ext.ttf > /dev/null || die "make_ext_font.py (pip install fonttools, or FONT_PY=python with fontTools)"
 mkdir -p Gen/Assets.xcassets && printf '{"info":{"author":"xcode","version":1}}\n' > Gen/Assets.xcassets/Contents.json || die "asset catalog"
