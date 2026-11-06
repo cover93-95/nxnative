@@ -7,7 +7,9 @@
 #   tar and <folder>.gone       stopped while the pack removed the folder: the tar is complete, the rest goes
 #   <folder>.unpack, <tar>.part unfinished, they go
 # unpack takes a lock on the parent folder that pack releases: regress.py's chain builds share a game's compile cache with the NSP script, and neither may pack it under the other.
-import fcntl, os, shutil, subprocess, time
+import os, shutil, subprocess, time
+try: import fcntl
+except ImportError: fcntl = None   # Windows: one build at a time, the folders stay folders
 from pathlib import Path
 
 QUIET_DAYS, QUIET_MIN_FILES, QUIET_FREE = 14, 100, 20 * 2**30   # pack_quiet
@@ -27,6 +29,7 @@ def _remove(p):
 
 def _lock(folder, say=None):   # without say, it does not wait: False while another process holds the lock
     parent = str(Path(folder).parent)
+    if fcntl is None: return True
     if parent in _locks or not os.path.isdir(parent): return True
     fd = os.open(parent, os.O_RDONLY)
     try:
@@ -70,6 +73,7 @@ def pack(folder, say=print, xattrs=False):
     """Replace folder with its tar and release unpack's lock. A folder another build is using is left to that build, which packs it at its end.
     A pack that fails (a full drive) is one [RED] line, not an error: the build is done, and the folder stays for the next one.
     xattrs: keep extended attributes, which `tar --xattrs -xf` restores (a RomFS folder's case-collision names, hle_fs.c's guest_name; the two caches have none they need)"""
+    if fcntl is None: return   # Windows: no tar of the caches, it would need the space twice
     folder = Path(folder); tar = tar_of(folder); part = Path(f'{tar}.part'); gone = Path(f'{folder}.gone')
     if not _lock(folder): return
     try:
@@ -104,6 +108,7 @@ def pack_quiet(work, say=print, days: float = QUIET_DAYS, min_files=QUIET_MIN_FI
     environment (pyvenv.cfg) stays, however long it goes unchanged: its files are read and not written, and scripts run it by its path.
     An existing <name>.tar is never overwritten. The tar must fit on the drive beside the folder, with QUIET_FREE to spare. Returns the names packed"""
     done, since = [], time.time() - days * 86400
+    if fcntl is None: return done
     try:
         with os.scandir(work) as it: entries = sorted((e for e in it if e.is_dir(follow_symlinks=False)), key=lambda e: e.name)
     except OSError: return done
