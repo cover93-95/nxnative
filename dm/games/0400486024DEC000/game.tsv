@@ -50,3 +50,6 @@ tex_dirty_upload	on
 # (patches.py FRAME_STEP: stubs at the framework's frame-rate tick and interval controller); 30 when 60 does not hold, game time = real time. DM_FPS_TARGET=30 forces 30,
 # 0 keeps the game's fixed interval 1 as shipped (slow motion below 60 fps)
 fps_target	60
+# iPhone (oot5 local): pipelines through MTL4Compiler (archive, prepare step, hybrid pipelines; the iOS build keeps the pulling libraries) and present snapshots, as Breath of the Wild on iOS
+pso_mtl4	on
+present_snap	on
