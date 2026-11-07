@@ -2000,6 +2000,37 @@ static int fstep_hold(void) {
 }
 // Once per present, before this frame's period is taken: the time since the previous frame's start (shown) and the frame's cost decide this frame's hold and the next frame's step.
 // Cost = max(CPU: the time between the frames' starts without the pacing wait, GPU: the latest finished frame's GPU time), in vsyncs
+// Resolution floor (state +0x14, read by Ocarina of Time's render-scale stub, patches.py render_scale): the game's own dynamic resolution judges its frame time against the
+// 60 fps it ships at, so under the host's 30 fps step it sits at its lowest size (854x480 on the iPhone, at 12-15 ms of GPU work in a 33 ms frame) and the picture is soft.
+// The host raises a floor under the game's scale while the GPU has time left in the frame's hold and lowers it before the GPU runs out: a mean of the finished frames' GPU
+// time over 30 presents, raised by 0.05 below 70% of the hold, lowered by 0.05 above 85% (80% when the device is hot), from 0.5 up to the ceiling (+0x10, DM_RENDER_SCALE);
+// under 0.5 the floor is 0 and the game's own choice stands. DM_RES_FLOOR=off turns it off; =<0.5..1> pins it (measurement); on by default for Ocarina of Time only (the
+// stub that reads +0x14), since another game's page may use the word
+static void res_tick(double gpu_ms, double hold_ms) {
+    static int on = -1; static float pinned; static double sum; static int n, nlog; static float floor_v;
+    if (on < 0) {
+        const char *e = getenv("DM_RES_FLOOR"); on = 0;
+        if (e && !strcmp(e, "off")) LOG("[nvn] resolution floor: off (DM_RES_FLOOR)");
+        else if (e && *e && strcmp(e, "auto")) { char *end; float f = strtof(e, &end); if (end != e && !*end && f >= 0.5f && f <= 1.0f) { pinned = f; on = 1; LOG("[nvn] resolution floor pinned at %.2f (DM_RES_FLOOR)", f); } else LOG("[RED] DM_RES_FLOOR=%s: off, auto or 0.5 to 1.0; off", e); }
+        else if (!strcmp(dm_prof()->id, "0400486024DEC000")) { on = 1; LOG("[nvn] resolution floor: raised under the game's dynamic resolution while the GPU has time left in the frame (DM_RES_FLOOR=off turns it off)"); }
+    }
+    if (!on || !dm_fps_state || hold_ms <= 0) return;
+    float ceil_v; memcpy(&ceil_v, dm_fps_state + 0x10, 4); if (!(ceil_v > 0.0f && ceil_v < 1.0f)) ceil_v = 1.0f;
+    float f = floor_v;
+    if (pinned > 0.0f) f = pinned < ceil_v ? pinned : ceil_v;
+    else {
+        if (gpu_ms > 0) { sum += gpu_ms; n++; }
+        if (n < 30) return;
+        double mean = sum / n, hi = (dm_thermal_now() >= 2 ? 0.80 : 0.85) * hold_ms; sum = 0; n = 0;
+        if (mean < 0.70 * hold_ms) f = f < 0.5f ? 0.5f : f + 0.05f;
+        else if (mean > hi) f = f - 0.05f;
+        if (f > ceil_v) f = ceil_v;
+        if (f < 0.5f) f = 0.0f;
+        if (f != floor_v && nlog < 200) { nlog++; LOG("[nvn] resolution floor %.2f → %.2f (GPU %.1f ms of a %.1f ms hold)", floor_v, f, mean, hold_ms); }
+    }
+    floor_v = f;
+    uint32_t bits; memcpy(&bits, &f, 4); __atomic_store_n((uint32_t *)(dm_fps_state + 0x14), bits, __ATOMIC_RELAXED);
+}
 static void fstep_tick(const win_t *o, int c) {
     static uint64_t prev, t0, v0, fixed_sum, held[FSTEP_MAX + 1]; static int nlog;
     const double v = 1e9 / fstep_hz();
@@ -2033,6 +2064,7 @@ static void fstep_tick(const win_t *o, int c) {
     g_fs.ramp = mtl_probe_ramp_on();
     g_fs.per_vsync = fstep_hz() / 60;
     int n = nvn_fstep_next(&g_fs, shown, cost, kmin, kmax, fixed, cslow || gslow);
+    res_tick(gpu * v / 1e6, (g_fs.k ? g_fs.k : kmin) * v / 1e6);
     if (dm_fps_state) __atomic_store_n((uint32_t *)(dm_fps_state + 0x20), (uint32_t)n, __ATOMIC_RELAXED);
     atomic_store(&g_fs_k, g_fs.k);
     held[g_fs.k]++; if (fixed) fixed_sum += (uint64_t)n;   // the stubs count only the host's steps

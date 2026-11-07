@@ -65,11 +65,12 @@ class RenderScale(unittest.TestCase):
         self.assertEqual([offset for offset, _ in patched], [site])
         self.assertEqual(context.render_scale, 1)
         self.assertLessEqual(cursor - area, 80)
-        for ceiling in (-1.0, 0.0, 0.5, 0.75, 1.0, 2.0, float('inf'), float('nan')):
+        for ceiling, floor in [(c, 0.0) for c in (-1.0, 0.0, 0.5, 0.75, 1.0, 2.0, float('inf'), float('nan'))] + [(c, f) for c in (0.0, 0.8, 1.0) for f in (0.5, 0.6, 0.8)]:
             machine.mem_write(base + state + 0x10, struct.pack('<f', ceiling))
-            for original in (0.25, 0.5, 0.625, 0.875, 1.0):
+            machine.mem_write(base + state + 0x14, struct.pack('<f', floor))
+            for original in (0.25, 0.4444, 0.5, 0.625, 0.875, 1.0):
                 for flags in (0, 0x60000000, 0x90000000, 0xf0000000):
-                    with self.subTest(ceiling=ceiling, original=original, flags=flags):
+                    with self.subTest(ceiling=ceiling, floor=floor, original=original, flags=flags):
                         registers = {getattr(arm, f'UC_ARM64_REG_X{i}'): 0x12340000 + i for i in range(31)}
                         registers.update({getattr(arm, f'UC_ARM64_REG_Q{i}'): 0x123456789abcdef0fedcba9876543210 + i for i in range(32)})
                         registers.update({arm.UC_ARM64_REG_X20: base + obj, arm.UC_ARM64_REG_SP: base + stack, arm.UC_ARM64_REG_NZCV: flags})
@@ -79,7 +80,8 @@ class RenderScale(unittest.TestCase):
                             machine.reg_write(register, value)
                         machine.mem_write(base + obj + 0xe58, b'\xa5' * 12)
                         machine.emu_start(base + site, base + site + 4, count=64)
-                        expected = original if not 0 < ceiling < 1 or math.isnan(ceiling) else min(original, ceiling)
+                        raised = struct.unpack('<f', struct.pack('<f', max(original, floor)))[0]   # the floor raises the game's scale; the ceiling caps last
+                        expected = raised if not 0 < ceiling < 1 or math.isnan(ceiling) else min(raised, ceiling)
                         stored = machine.mem_read(base + obj + 0xe58, 12)
                         self.assertEqual(bytes(stored), b'\xa5' * 4 + struct.pack('<f', expected) + b'\xa5' * 4)
                         for register, value in registers.items():

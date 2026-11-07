@@ -64,7 +64,10 @@ def frame_step(ctx):
     emit(B(here(), 0x3b4f058))
     fs_put(0x3b4f054, [B(0x3b4f054, start)], "interval controller output: the host's step in whole vsyncs (state page target fps; 0 = the controller's own)")
 
-# Dynamic-resolution ceiling (PR 1497): the engine stores its final scale after dynamic and fixed-mode selection; state +0x10 holds DM_RENDER_SCALE.
+# Dynamic-resolution ceiling (PR 1497) and floor: the engine stores its final scale after dynamic and fixed-mode selection; state +0x10 holds DM_RENDER_SCALE (the ceiling),
+# state +0x14 a floor the host raises while the GPU has time left (hle_nvn.c res_tick). The game's own controller judges its frame time against the 60 fps it ships at, so
+# with the host's 30 fps step it stays at its lowest size (854x480 on the iPhone at 12-15 ms of GPU work in a 33 ms frame); the floor lets the picture grow into that time.
+# Stored = min(max(game's scale, floor), ceiling); a ceiling of 0 or less (or NaN) caps nothing, a floor of 0 (the page's initial value) keeps the game's scale.
 def render_scale(ctx):
     site = 0x31d3f48
     ctx.site(site, '805e0ebd')  # str s0,[x20,#0xe5c]
@@ -75,22 +78,19 @@ def render_scale(ctx):
     for word in (
         0xd53b4211,  # mrs x17,nzcv: the original store leaves flags intact
         0xbd40121e,  # ldr s30,[x16,#0x10]: host scale ceiling
+        0xbd40161f,  # ldr s31,[x16,#0x14]: host scale floor
+        0x1e3f481f,  # fmax s31,s0,s31: never below the floor
         0x1e2023c8,  # fcmp s30,#0
-        0x540000ed,  # b.le original: an unset state keeps the game
-        0x1e2e101f,  # fmov s31,#1
-        0x1e3f23c0,  # fcmp s30,s31
-        0x5400008a,  # b.ge original: 1.0 keeps the original bits
-        0x1e3e581f,  # fmin s31,s0,s30: the game can still choose a lower scale
-        0xbd0e5e9f,  # str s31,[x20,#0xe5c]: leave s0 as the original store did
-        0x14000002,  # b restore
-        0xbd0e5e80,  # original: str s0,[x20,#0xe5c]
-        0xd51b4211,  # restore: msr nzcv,x17
+        0x5400004d,  # b.le store: an unset ceiling caps nothing
+        0x1e3e5bff,  # fmin s31,s31,s30: the ceiling last
+        0xbd0e5e9f,  # store: str s31,[x20,#0xe5c] (s0 stays as the original store left it)
+        0xd51b4211,  # msr nzcv,x17
         0xa8c147f0,  # ldp x16,x17,[sp],#16
         0xacc17ffe,  # ldp q30,q31,[sp],#32
     ):
         ctx.emit(word)
     ctx.emit(B(ctx.here(), site + 4))
-    ctx.put(site, [B(site, start)], 'dynamic resolution capped by the host render scale (1.0 = original)')
+    ctx.put(site, [B(site, start)], 'dynamic resolution between the host floor and the host render scale')
     ctx.render_scale = 1
 
 
