@@ -30,6 +30,7 @@ struct dm_profile {
     char feedback_snap[DM_PROF_STR];
     int tex_flush_upload, render_cond, tex_dirty_upload, tex_dyn_slots, gpu_ts_segment, vconv_range;
     int draw_barriers_game;      // draw_barriers game: draw passes ordered by the game's own barriers (nvn_mtl.m barrier_game)
+    char upscaler_keys[2048];    // upscaler_keys: the game's own upscaler compute shaders, comma-separated 16-digit keys (nvn_mtl.m up_is_key; DM_UPSCALER=metalfx)
     int nvn_api_major, nvn_api_minor;   // major 0 = decide by the SDK version (hle_nvn.c nvn_api)
     uint64_t stdalloc_cap;       // StandardAllocator's address space (hle_svc.c); 0 = what the alias region has room for
     uint32_t shader_skip_off, shader_skip_len;   // shader_key_skip <offset>+<length>: control bytes the shader keys hash as zeros (len 0 = none)

@@ -297,7 +297,7 @@ if __name__ == '__main__':
                 ('fps_target', 'FPS_TARGET'), ('fps_hold', 'FPS_HOLD'), ('present_snap', 'PRESENT_SNAP'), ('pso_mtl4', 'PSO_MTL4'),
                 ('shared_font', 'SHARED_FONT_TTF'), ('pad_layout', 'PAD_LAYOUT'), ('op_mode', 'OPMODE'), ('perf_mode', 'PERF_BOOST'),
                 ('feedback_snap', 'FEEDBACK_SNAP'), ('tex_flush_upload', 'TEX_FLUSH_UPLOAD'), ('render_cond', 'RENDER_COND'),
-                ('tex_dirty_upload', 'TEX_DIRTY_UPLOAD'), ('tex_dyn_slots', 'TEX_DYN_SLOTS'), ('gpu_timestamps', 'GPU_TS_SEGMENT'), ('draw_barriers', 'DRAW_BARRIERS_GAME'),
+                ('tex_dirty_upload', 'TEX_DIRTY_UPLOAD'), ('tex_dyn_slots', 'TEX_DYN_SLOTS'), ('gpu_timestamps', 'GPU_TS_SEGMENT'), ('draw_barriers', 'DRAW_BARRIERS_GAME'), ('upscaler_keys', 'UPSCALER_KEYS'),
                 ('vconv_range', 'VCONV_RANGE'), ('stdalloc_cap', 'STDALLOC_CAP'), ('tex_bc_cpu', 'TEX_BC_CPU'), ('ue_texture_pool', 'UE_TEXTURE_POOL'),
                 ('enc_thread', 'ENC_THREAD'), ('game_args', 'ARGS'), ('game_env', 'ENV')]
         def val(macro):   # the header's C spelling → the file's plain spelling
@@ -313,6 +313,7 @@ if __name__ == '__main__':
              '# profile would hold is written, so the file alone describes the game.']
         for key, macro in KEYS:
             v = val(macro)
+            if key == 'upscaler_keys' and v == '': v = 'none'   # an empty value would read as a missing one, which keeps the compiled game's keys
             if v is not None: L.append(f'{key}\t{v}')
         api = [val('NVN_API_MAJOR'), val('NVN_API_MINOR')]
         L.append(f'device_api\t{api[0]}.{api[1] or 0}' if api[0] is not None else 'device_api\t0.0')   # 0.0 = by the SDK version: a key left out would keep the compiled game's value
