@@ -103,6 +103,9 @@ static uint64_t num(const char *v, uint64_t dflt) {
 #ifndef DM_GAME_DRAW_BARRIERS_GAME
 #define DM_GAME_DRAW_BARRIERS_GAME 0
 #endif
+#ifndef DM_GAME_GPU_TS_HZ
+#define DM_GAME_GPU_TS_HZ 0
+#endif
 #ifndef DM_GAME_UPSCALER_KEYS
 #define DM_GAME_UPSCALER_KEYS ""
 #endif
@@ -158,7 +161,7 @@ static void defaults(void) {
     P.pad_layout = DM_GAME_PAD_LAYOUT; P.opmode = DM_GAME_OPMODE; P.perf_boost = DM_GAME_PERF_BOOST;
     copy_str(P.feedback_snap, sizeof P.feedback_snap, DM_GAME_FEEDBACK_SNAP);
     P.tex_flush_upload = DM_GAME_TEX_FLUSH_UPLOAD; P.render_cond = DM_GAME_RENDER_COND; P.tex_dirty_upload = DM_GAME_TEX_DIRTY_UPLOAD;
-    P.tex_dyn_slots = DM_GAME_TEX_DYN_SLOTS; P.gpu_ts_segment = DM_GAME_GPU_TS_SEGMENT; P.draw_barriers_game = DM_GAME_DRAW_BARRIERS_GAME; copy_str(P.upscaler_keys, sizeof P.upscaler_keys, DM_GAME_UPSCALER_KEYS); P.vconv_range = DM_GAME_VCONV_RANGE;
+    P.tex_dyn_slots = DM_GAME_TEX_DYN_SLOTS; P.gpu_ts_segment = DM_GAME_GPU_TS_SEGMENT; P.draw_barriers_game = DM_GAME_DRAW_BARRIERS_GAME; copy_str(P.upscaler_keys, sizeof P.upscaler_keys, DM_GAME_UPSCALER_KEYS); P.gpu_ts_hz = DM_GAME_GPU_TS_HZ; P.vconv_range = DM_GAME_VCONV_RANGE;
 #ifdef DM_GAME_NVN_API_MAJOR
     P.nvn_api_major = DM_GAME_NVN_API_MAJOR; P.nvn_api_minor = DM_GAME_NVN_API_MINOR;
 #else
@@ -225,6 +228,7 @@ static void set_kv(const char *k, const char *v) {
     else if (!strcmp(k, "tex_dyn_slots")) P.tex_dyn_slots = truthy(v);
     else if (!strcmp(k, "gpu_timestamps")) P.gpu_ts_segment = !strcmp(v, "segment") || !strcmp(v, "1");
     else if (!strcmp(k, "draw_barriers")) P.draw_barriers_game = !strcmp(v, "game") || !strcmp(v, "1");
+    else if (!strcmp(k, "gpu_ts_hz")) P.gpu_ts_hz = num(v, P.gpu_ts_hz);
     else if (!strcmp(k, "upscaler_keys")) copy_str(P.upscaler_keys, sizeof P.upscaler_keys, !strcmp(v, "none") ? "" : v);
     else if (!strcmp(k, "vconv_range")) P.vconv_range = truthy(v);
     else if (!strcmp(k, "device_api")) { char *e; P.nvn_api_major = (int)strtol(v, &e, 10); if (e && *e == '.') P.nvn_api_minor = atoi(e + 1); }
@@ -273,7 +277,7 @@ static void read_env(void) {
     static const char *keys[] = {"TITLE_ID","NAME","ROMFS_MARKER","PROGRAM_ID","MODULES","MEM_RESERVE","MEM_ALIAS","MEM_STACK","APP_POOL",
         "MEM_USED","SYS_RESOURCE","MEM_MAP_LIMIT","PRESENT_INTERVAL","CORE_PREEMPT","ALLOC_BIG_ALIGN","FPS_TARGET","FPS_HOLD","PRESENT_SNAP",
         "PSO_MTL4","SHARED_FONT","PAD_LAYOUT","OP_MODE","PERF_MODE","FEEDBACK_SNAP","TEX_FLUSH_UPLOAD","RENDER_COND","TEX_DIRTY_UPLOAD",
-        "TEX_DYN_SLOTS","GPU_TIMESTAMPS","DRAW_BARRIERS","UPSCALER_KEYS","VCONV_RANGE","DEVICE_API","STDALLOC_CAP","SHADER_KEY_SKIP","TEX_BC_CPU","UE_TEXTURE_POOL","ENC_THREAD","GAME_ARGS","GAME_ENV", NULL};
+        "TEX_DYN_SLOTS","GPU_TIMESTAMPS","DRAW_BARRIERS","UPSCALER_KEYS","GPU_TS_HZ","VCONV_RANGE","DEVICE_API","STDALLOC_CAP","SHADER_KEY_SKIP","TEX_BC_CPU","UE_TEXTURE_POOL","ENC_THREAD","GAME_ARGS","GAME_ENV", NULL};
     char k[64], name[96];
     for (int i = 0; keys[i]; i++) {
         snprintf(k, sizeof k, "%s", keys[i]);
@@ -289,6 +293,8 @@ static void load(void) {
     const char *path = getenv("DM_PROFILE");
     if (path && *path) { copy_str(P.source, sizeof P.source, path); read_file(path); }
     read_env();   // DM_PROF_* overrides apply on top of the file or of the compiled profile
+    { extern uint64_t nvn_ts_profile_hz __attribute__((weak));   // nvn_mtl.m: the counter rate the shell was compiled with; the running game's profile wins
+      if (P.gpu_ts_hz && &nvn_ts_profile_hz) nvn_ts_profile_hz = P.gpu_ts_hz; }
     if (P.nmod <= 0) {   // a profile file that names no modules: the compiled list, which is the one the executable embeds
         const char *m[] = DM_GAME_MODULES; int n = DM_GAME_NMOD; if (n > DM_PROF_MAX_MOD) n = DM_PROF_MAX_MOD;
         for (int i = 0; i < n; i++) { copy_str(P.modbuf[i], sizeof P.modbuf[i], m[i]); P.modules[i] = P.modbuf[i]; } P.nmod = n;

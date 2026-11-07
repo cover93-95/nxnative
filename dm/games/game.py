@@ -300,7 +300,7 @@ if __name__ == '__main__':
                 ('fps_target', 'FPS_TARGET'), ('fps_hold', 'FPS_HOLD'), ('present_snap', 'PRESENT_SNAP'), ('pso_mtl4', 'PSO_MTL4'),
                 ('shared_font', 'SHARED_FONT_TTF'), ('pad_layout', 'PAD_LAYOUT'), ('op_mode', 'OPMODE'), ('perf_mode', 'PERF_BOOST'),
                 ('feedback_snap', 'FEEDBACK_SNAP'), ('tex_flush_upload', 'TEX_FLUSH_UPLOAD'), ('render_cond', 'RENDER_COND'),
-                ('tex_dirty_upload', 'TEX_DIRTY_UPLOAD'), ('tex_dyn_slots', 'TEX_DYN_SLOTS'), ('gpu_timestamps', 'GPU_TS_SEGMENT'), ('draw_barriers', 'DRAW_BARRIERS_GAME'), ('upscaler_keys', 'UPSCALER_KEYS'),
+                ('tex_dirty_upload', 'TEX_DIRTY_UPLOAD'), ('tex_dyn_slots', 'TEX_DYN_SLOTS'), ('gpu_timestamps', 'GPU_TS_SEGMENT'), ('draw_barriers', 'DRAW_BARRIERS_GAME'), ('upscaler_keys', 'UPSCALER_KEYS'), ('gpu_ts_hz', 'GPU_TS_HZ'),
                 ('vconv_range', 'VCONV_RANGE'), ('stdalloc_cap', 'STDALLOC_CAP'), ('tex_bc_cpu', 'TEX_BC_CPU'), ('ue_texture_pool', 'UE_TEXTURE_POOL'),
                 ('enc_thread', 'ENC_THREAD'), ('game_args', 'ARGS'), ('game_env', 'ENV')]
         def val(macro):   # the header's C spelling → the file's plain spelling
