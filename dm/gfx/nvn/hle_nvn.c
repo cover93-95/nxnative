@@ -2004,15 +2004,17 @@ static int fstep_hold(void) {
 // 60 fps it ships at, so under the host's 30 fps step it sits at its lowest size (854x480 on the iPhone, at 12-15 ms of GPU work in a 33 ms frame) and the picture is soft.
 // The host raises a floor under the game's scale while the GPU has time left in the frame's hold and lowers it before the GPU runs out: a mean of the finished frames' GPU
 // time over 30 presents, raised by 0.05 below 70% of the hold, lowered by 0.05 above 85% (80% when the device is hot), from 0.5 up to the ceiling (+0x10, DM_RENDER_SCALE);
-// under 0.5 the floor is 0 and the game's own choice stands. DM_RES_FLOOR=off turns it off; =<0.5..1> pins it (measurement); on by default for Ocarina of Time only (the
-// stub that reads +0x14), since another game's page may use the word
+// under 0.5 the floor is 0 and the game's own choice stands. DM_RES_FLOOR=auto turns it on, =<0.5..1> pins it (measurement); off by default. Only for a build whose stub
+// reads +0x14 (Ocarina of Time), since another game's page may use the word
 static void res_tick(double gpu_ms, double hold_ms) {
     static int on = -1; static float pinned; static double sum; static int n, nlog; static float floor_v;
     if (on < 0) {
         const char *e = getenv("DM_RES_FLOOR"); on = 0;
         if (e && !strcmp(e, "off")) LOG("[nvn] resolution floor: off (DM_RES_FLOOR)");
         else if (e && *e && strcmp(e, "auto")) { char *end; float f = strtof(e, &end); if (end != e && !*end && f >= 0.5f && f <= 1.0f) { pinned = f; on = 1; LOG("[nvn] resolution floor pinned at %.2f (DM_RES_FLOOR)", f); } else LOG("[RED] DM_RES_FLOOR=%s: off, auto or 0.5 to 1.0; off", e); }
-        else if (!strcmp(dm_prof()->id, "0400486024DEC000")) { on = 1; LOG("[nvn] resolution floor: raised under the game's dynamic resolution while the GPU has time left in the frame (DM_RES_FLOOR=off turns it off)"); }
+        else if (e && !strcmp(e, "auto")) { on = 1; LOG("[nvn] resolution floor: raised under the game's dynamic resolution while the GPU has time left in the frame (DM_RES_FLOOR=auto)"); }
+        // Off by default: under a 30 fps hold iOS lowers the GPU clock to the longer deadline, so the GPU time it measures (28-30 ms on the iPhone where 60 fps takes 15 ms)
+        // says nothing about the time left; at a 60 fps target the game's own dynamic resolution already reaches 1440x810 there
     }
     if (!on || !dm_fps_state || hold_ms <= 0) return;
     float ceil_v; memcpy(&ceil_v, dm_fps_state + 0x10, 4); if (!(ceil_v > 0.0f && ceil_v < 1.0f)) ceil_v = 1.0f;
