@@ -48,10 +48,10 @@ tex_flush_upload	on
 tex_dirty_upload	on
 
 # ---- Frame rate ----
-# 60 fps (one game tick a frame; the game never changes its present interval): the host decides each frame's step in whole vsyncs and holds the frame that long
-# (patches.py FRAME_STEP: stubs at the framework's frame-rate tick and interval controller); 30 when 60 does not hold, game time = real time. DM_FPS_TARGET=30 forces 30,
-# 0 keeps the game's fixed interval 1 as shipped (slow motion below 60 fps)
-fps_target	60
+# The iPhone quality preset is a fixed 30 fps: the game renders at its full internal scale (DM_RENDER_SCALE=1.0) while the host steps time by two 60 Hz vsyncs.
+# This avoids the 60 fps controller's repeated 2/3-vsync changes, leaves thermal headroom, and keeps game time equal to real time. The launcher can still select 60 for profiling;
+# 0 keeps the game's fixed interval 1 as shipped (slow motion below 60 fps).
+fps_target	30
 # iPhone (oot5 local): pipelines through MTL4Compiler (archive, prepare step, hybrid pipelines; the iOS build keeps the pulling libraries) and present snapshots, as Breath of the Wild on iOS
 pso_mtl4	on
 present_snap	on

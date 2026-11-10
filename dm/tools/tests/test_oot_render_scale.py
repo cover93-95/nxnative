@@ -37,7 +37,9 @@ class RenderScale(unittest.TestCase):
                         rows = settings.build('0400486024DEC000', tmp, 'unused')['settings']
                     scale = [row for row in rows if row['env'] == 'DM_RENDER_SCALE']
                     self.assertEqual(bool(scale), supported)
-                    self.assertIn('DM_FPS_TARGET', [row['env'] for row in rows])   # PR 1584's fps_target 60 in this merge
+                    target = [row for row in rows if row['env'] == 'DM_FPS_TARGET']
+                    self.assertEqual(len(target), 1)
+                    self.assertEqual(target[0]['default'], '30')   # iPhone quality preset: full render scale at a fixed, cooler 30 fps
                     if scale:
                         self.assertEqual((scale[0]['min'], scale[0]['max'], scale[0]['default']), (0.5, 1.0, '1.0'))
 

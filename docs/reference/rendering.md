@@ -1074,6 +1074,14 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Fix:** `nvn_rec.h` records the indirect draw (`RO_R_MESH_IND`: the argument buffer's GPU address and the threads per object and mesh threadgroup, as `RO_R_MESH` keeps them) and replays it. `t_rec_draws` checks that the recorder has a stand-in for every draw the NVN layer encodes.
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md): the iOS app aborted when a save loaded; on the Mac with the encode thread on, 28 s after the title ([issue #1265](https://github.com/seedds/nxnative/issues/1265)).
 
+### The GPU idles before each submission while the replay waits for the encode thread
+
+- **Symptom:** with Metal encoding on its own thread (`DM_NVN_ENC_THREAD=1`, the default on iOS), a frame's GPU span is far above its GPU work, and the gaps sit before the first encoder of a submission: `DM_NVN_GPUPROF` with its CPU timeline shows the GPU done with everything committed while the next submission is still being encoded. The wait ledger (`DM_NVN_WAITS=1`) shows `encode thread drain` blocked about once per submission.
+- **Cause:** `mtl_sub_commit` waited for the encode thread to finish the submission (`rec_drain`) before returning, so the replay never translated the next submission while the encode thread encoded the last one. A game that splits its frame at every event signal makes many submissions, and a submission under `cut_draws()` draws has no segment to start the GPU early.
+- **Fix:** the submission's records go to the encode thread with a note of its fence (`RO_NOTE` on `g_sub_cmt`), and the replay goes on. A present without a snapshot waits for the note of the submissions before it (`sub_commit_wait`, `pq_item.sub_v`). `DM_NVN_SUB_DRAIN=1` restores the old wait for A/B measurement.
+- **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) on the iPhone 17 (Kokiri Forest, 2026-11-10): about 30 submissions a frame; one measured frame spanned 34.9 ms for 20.2 ms of GPU work, with 13.6 ms of gaps before submissions.
+- **Check:** `make -C dm/gfx/tests GAME=<id> t_sub_overlap && dm/gfx/tests/t_sub_overlap` holds the encode thread inside a submission and checks that replay returns, the commit note remains ordered, and presentation waits for it.
+
 ### Inline uniform updates as ordered GPU copies
 
 - **Cause:** reading the uniform buffer from the CPU at encode time gives the frame's *last* value, not the draw's.
